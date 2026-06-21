@@ -357,24 +357,7 @@
       }
     });
 
-    // 0.5 处理视频容器：将标记了 data-x-video 的 div 替换为 video 标签
-    // 保护：如果容器包含文本内容（超过10字符），不替换整个容器，避免丢失正文
-    Array.from(node.querySelectorAll("[data-x-video]")).forEach(el => {
-      const src = el.getAttribute("data-x-video");
-      if (src && el.parentNode) {
-        const text = getText(el);
-        if (text && text.length > 10 && el.tagName !== "VIDEO") {
-          // 包含文本内容，不替换整个容器，只移除标记
-          el.removeAttribute("data-x-video");
-          return;
-        }
-        const video = document.createElement("video");
-        video.setAttribute("src", src);
-        video.setAttribute("controls", "true");
-        video.setAttribute("data-x-video-mark", "true");
-        el.parentNode.replaceChild(video, el);
-      }
-    });
+    // 1. 按深度降序处理 aria-hidden 元素，先提取图片再删除
     const ariaHidden = Array.from(node.querySelectorAll('[aria-hidden="true"]'));
     ariaHidden.sort((a, b) => {
       const getDepth = (el) => {
@@ -542,33 +525,9 @@
         if (isAvatar(src)) return "";
         src = fixImageUrl(src);
         
-        // X 视频预览图（amplify_video_thumb）：尝试查找真实视频 URL 嵌入播放器
+        // X 视频预览图（amplify_video_thumb）：默认显示截图，但标记为视频
         if (src.includes("amplify_video_thumb")) {
-          let videoSrc = "";
-          let parent = node.parentElement;
-          // 向上查找 5 层父元素，寻找 video 标签或视频链接
-          let depth = 0;
-          while (parent && depth < 5) {
-            const videoEl = parent.querySelector("video");
-            if (videoEl) {
-              videoSrc = videoEl.getAttribute("src") || "";
-              const source = videoEl.querySelector("source");
-              if (!videoSrc && source) videoSrc = source.getAttribute("src") || "";
-            }
-            if (!videoSrc) {
-              videoSrc = parent.getAttribute("data-url") || parent.getAttribute("data-src") || "";
-            }
-            if (videoSrc && !videoSrc.startsWith("blob:") && !videoSrc.startsWith("data:")) break;
-            parent = parent.parentElement;
-            depth++;
-          }
-          
-          if (videoSrc) {
-            // 找到真实视频 URL，嵌入 HTML5 视频播放器（Markdown 支持内联 HTML）
-            return `\n\n<video src="${videoSrc}" controls poster="${src}" preload="none" style="max-width:100%"></video>\n\n`;
-          }
-          // 找不到真实视频 URL，降级为视频链接
-          return `\n\n[视频](${src})\n\n`;
+          return `\n\n![视频](${src})\n\n`;
         }
         
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
