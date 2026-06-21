@@ -109,6 +109,12 @@ web2md/
 
 ---
 
+## 免责声明
+
+**本脚本仅供个人学习、研究和备份自己拥有合法访问权限的内容使用。** 使用本脚本即表示您同意遵守各网站的服务条款，不侵犯版权，不批量爬取无权访问的内容。详细条款请阅读 [DISCLAIMER.md](./DISCLAIMER.md)。
+
+---
+
 ## 作者
 
 [@ghoustghoust](https://github.com/ghoustghoust)
