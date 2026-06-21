@@ -180,7 +180,8 @@
         }
         
         // 标记视频（原生 video 标签或 X 视频容器 div[data-media-key]）
-        if (tag === "video" || el.getAttribute("data-media-key") || el.querySelector("video")) {
+        // 注意：不检查 el.querySelector("video")，避免将包含视频的大容器误标记
+        if (tag === "video" || el.getAttribute("data-media-key")) {
           const videoEl = tag === "video" ? el : el.querySelector("video");
           if (videoEl) {
             const src = videoEl.getAttribute("src") || "";
@@ -192,6 +193,7 @@
               el.setAttribute("data-x-video", finalSrc);
             }
           }
+          continue; // 视频元素不继续执行加粗/标题检测
         }
         const fw = style.fontWeight;
         const fz = style.fontSize;
@@ -355,10 +357,17 @@
       }
     });
 
-    // 0.5 处理视频容器：将标记了 data-x-video 的 div 替换为 video 标签（保留视频链接）
+    // 0.5 处理视频容器：将标记了 data-x-video 的 div 替换为 video 标签
+    // 保护：如果容器包含文本内容（超过10字符），不替换整个容器，避免丢失正文
     Array.from(node.querySelectorAll("[data-x-video]")).forEach(el => {
       const src = el.getAttribute("data-x-video");
       if (src && el.parentNode) {
+        const text = getText(el);
+        if (text && text.length > 10 && el.tagName !== "VIDEO") {
+          // 包含文本内容，不替换整个容器，只移除标记
+          el.removeAttribute("data-x-video");
+          return;
+        }
         const video = document.createElement("video");
         video.setAttribute("src", src);
         video.setAttribute("controls", "true");
