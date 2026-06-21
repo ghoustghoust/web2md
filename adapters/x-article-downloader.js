@@ -575,6 +575,12 @@
     // 3. 删除相邻重复的图片
     md = md.replace(/(!\[Image\]\((https:\/\/pbs\.twimg\.com\/[^)]+)\))\n*\n+!\[Image\]\(\2\)/g, "$1");
 
+    // 3a. 删除视频 base64 封面图（避免 Markdown 文件过大，且 X 视频封面无法直接下载）
+    md = md.replace(/!\[.*?\]\(data:image\/[^;]+;base64,[^\)]+\)/g, "");
+
+    // 3b. 将视频时长文本替换为视频提示
+    md = md.replace(/^(\d+:\d{2}(?:\s*\/\s*\d+:\d{2})?)\s*$/gm, "> [视频：$1]");
+
     // 4. 逐行合并孤立的 Markdown 内联元素（链接、加粗、斜体、行内代码）
     // 用逐行扫描替代正则，避免贪婪匹配导致的错位问题
     (function mergeInlineLines() {
