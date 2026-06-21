@@ -542,9 +542,32 @@
         if (isAvatar(src)) return "";
         src = fixImageUrl(src);
         
-        // X 视频预览图（amplify_video_thumb）标记为视频，而非普通图片
-        const isVideoThumb = src.includes("amplify_video_thumb");
-        if (isVideoThumb) {
+        // X 视频预览图（amplify_video_thumb）：尝试查找真实视频 URL 嵌入播放器
+        if (src.includes("amplify_video_thumb")) {
+          let videoSrc = "";
+          let parent = node.parentElement;
+          // 向上查找 5 层父元素，寻找 video 标签或视频链接
+          let depth = 0;
+          while (parent && depth < 5) {
+            const videoEl = parent.querySelector("video");
+            if (videoEl) {
+              videoSrc = videoEl.getAttribute("src") || "";
+              const source = videoEl.querySelector("source");
+              if (!videoSrc && source) videoSrc = source.getAttribute("src") || "";
+            }
+            if (!videoSrc) {
+              videoSrc = parent.getAttribute("data-url") || parent.getAttribute("data-src") || "";
+            }
+            if (videoSrc && !videoSrc.startsWith("blob:") && !videoSrc.startsWith("data:")) break;
+            parent = parent.parentElement;
+            depth++;
+          }
+          
+          if (videoSrc) {
+            // 找到真实视频 URL，嵌入 HTML5 视频播放器（Markdown 支持内联 HTML）
+            return `\n\n<video src="${videoSrc}" controls poster="${src}" preload="none" style="max-width:100%"></video>\n\n`;
+          }
+          // 找不到真实视频 URL，降级为视频链接
           return `\n\n[视频](${src})\n\n`;
         }
         
