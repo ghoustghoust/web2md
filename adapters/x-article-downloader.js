@@ -1,18 +1,18 @@
 // ==UserScript==
-// @name         X 文章下载器（Article 通用版）
-// @namespace    https://github.com/ghoustghoust/web2md
-// @source       https://github.com/ghoustghoust/web2md
+// @name         X 文章下崽器（Article 通用版）
+// @namespace    http://x.com/
+// @source       https://github.com/
 // @version      2.0.15
 // @description  适用于 X（Twitter）Articles 详情页：一键将文章正文全格式导出为 Markdown，支持图片、标题、双语段落
-// @author       ghoustghoust
+// @author       xdd (modified)
 // @match        *://x.com/*
 // @match        *://twitter.com/*
 // @license      MIT
 // @grant        none
 // @run-at       document-idle
 // @noframes
-// @homepageURL  https://github.com/ghoustghoust/web2md
-// @supportURL   https://github.com/ghoustghoust/web2md/issues
+// @homepageURL  https://x.com/
+// @supportURL   https://x.com/
 // @connect      unpkg.com
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
 // ==/UserScript==
@@ -35,7 +35,7 @@
   "use strict";
 
   const BUTTON_ID = "x-article-downloader-floating-button";
-  const DEBUG_PREFIX = "[下载器]";
+  const DEBUG_PREFIX = "[下崽器]";
 
   function getText(el) {
     if (!el || typeof el.innerText !== "string") return "";
@@ -179,7 +179,20 @@
           }
         }
         
-        // 标记加粗 / 标题（font-weight >= 600，font-size >= 18px 为标题）
+        // 标记视频（原生 video 标签或 X 视频容器 div[data-media-key]）
+        if (tag === "video" || el.getAttribute("data-media-key") || el.querySelector("video")) {
+          const videoEl = tag === "video" ? el : el.querySelector("video");
+          if (videoEl) {
+            const src = videoEl.getAttribute("src") || "";
+            const source = videoEl.querySelector("source");
+            const src2 = source ? source.getAttribute("src") || "" : "";
+            const poster = videoEl.getAttribute("poster") || "";
+            const finalSrc = src || src2 || poster;
+            if (finalSrc) {
+              el.setAttribute("data-x-video", finalSrc);
+            }
+          }
+        }
         const fw = style.fontWeight;
         const fz = style.fontSize;
         const fzVal = parseFloat(fz);
@@ -342,7 +355,17 @@
       }
     });
 
-    // 1. 按深度降序处理 aria-hidden 元素，先提取图片再删除
+    // 0.5 处理视频容器：将标记了 data-x-video 的 div 替换为 video 标签（保留视频链接）
+    Array.from(node.querySelectorAll("[data-x-video]")).forEach(el => {
+      const src = el.getAttribute("data-x-video");
+      if (src && el.parentNode) {
+        const video = document.createElement("video");
+        video.setAttribute("src", src);
+        video.setAttribute("controls", "true");
+        video.setAttribute("data-x-video-mark", "true");
+        el.parentNode.replaceChild(video, el);
+      }
+    });
     const ariaHidden = Array.from(node.querySelectorAll('[aria-hidden="true"]'));
     ariaHidden.sort((a, b) => {
       const getDepth = (el) => {
@@ -515,13 +538,20 @@
     });
 
     td.addRule("xVideo", {
-      filter: ["video"],
+      filter: function(node) {
+        return node.nodeName === "VIDEO" || (node.getAttribute && node.getAttribute("data-x-video-mark") === "true");
+      },
       replacement: (content, node) => {
-        const src = node.getAttribute("src") || "";
+        let src = node.getAttribute("src") || "";
         const source = node.querySelector("source");
-        const src2 = source ? source.getAttribute("src") : "";
+        const src2 = source ? source.getAttribute("src") || "" : "";
         const final = src || src2;
-        return final ? `\n\n[视频](${final})\n\n` : "";
+        if (!final) return "";
+        // 如果视频链接是 blob 或 data URI，降级为提示
+        if (final.startsWith("blob:") || final.startsWith("data:")) {
+          return "\n\n> [视频内容：浏览器内部链接，无法直接下载]\n\n";
+        }
+        return `\n\n[视频](${final})\n\n`;
       }
     });
 
