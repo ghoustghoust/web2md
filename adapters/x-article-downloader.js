@@ -541,6 +541,13 @@
         if (!src) return "";
         if (isAvatar(src)) return "";
         src = fixImageUrl(src);
+        
+        // X 视频预览图（amplify_video_thumb）标记为视频，而非普通图片
+        const isVideoThumb = src.includes("amplify_video_thumb");
+        if (isVideoThumb) {
+          return `\n\n[视频](${src})\n\n`;
+        }
+        
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
         return `\n\n![${alt}](${src})\n\n`;
       }
