@@ -525,9 +525,9 @@
         if (isAvatar(src)) return "";
         src = fixImageUrl(src);
         
-        // X 视频预览图（amplify_video_thumb）：默认显示截图，但标记为视频
+        // X 视频预览图（amplify_video_thumb）：默认显示截图，加视频标记
         if (src.includes("amplify_video_thumb")) {
-          return `\n\n![视频](${src})\n\n`;
+          return `\n\n> 🎬 视频\n\n![Image](${src})\n\n`;
         }
         
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
