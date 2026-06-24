@@ -221,17 +221,47 @@
       strongDelimiter: "**"
     });
 
-    // 图片：保留 alt，转绝对路径
+    // 图片：保留 alt，转绝对路径，过滤占位符
     td.addRule("sspaiImage", {
       filter: "img",
       replacement: (content, node) => {
-        let src = node.getAttribute("src") || node.getAttribute("data-src") || "";
-        if (!src) return "";
+        // 按优先级尝试获取真实图片 URL
+        let src = node.getAttribute("data-original") || 
+                  node.getAttribute("data-original-src") || 
+                  node.getAttribute("data-src") || 
+                  node.getAttribute("data-lazy-src") || 
+                  node.getAttribute("src") || "";
+        
+        // 过滤 base64 占位符和空值
+        if (!src || src.startsWith("data:")) {
+          // 尝试从 srcset 提取
+          const srcset = node.getAttribute("srcset");
+          if (srcset) {
+            const candidates = srcset.split(',').map(s => {
+              const parts = s.trim().split(/\s+/);
+              const url = parts[0];
+              const w = parts[1] ? parseInt(parts[1].replace(/[^0-9]/g, '')) : 0;
+              return { url, w };
+            }).filter(c => c.url && !c.url.startsWith("data:"));
+            candidates.sort((a, b) => b.w - a.w);
+            if (candidates.length > 0) src = candidates[0].url;
+          }
+        }
+        
+        if (!src || src.startsWith("data:")) return "";
+        
+        // 转换为绝对路径
         try {
           src = new URL(src, location.href).href;
         } catch (e) {
           // 保持原样
         }
+        
+        // 清理少数派 CDN 参数，获取原图（去掉 imageView2 压缩参数）
+        if (src.includes("cdnfile.sspai.com") && src.includes("imageView2")) {
+          src = src.replace(/\?imageView2.*$/, "");
+        }
+        
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
         return `\n\n![${alt}](${src})\n\n`;
       }
