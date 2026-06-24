@@ -10,6 +10,7 @@
 |------|---------|------|------|
 | **X / Twitter** | `adapters/x-article-downloader.js` | ✅ 稳定 | 支持文章页、图片、链接、加粗、标题层级 |
 | **Discourse 论坛** | `adapters/discourse-downloader.js` | ✅ 稳定 | 支持帖子正文+回复、表格、代码块、折叠详情、引用块 |
+| **少数派** | `adapters/sspai-downloader.js` | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
 | 知乎 | 待开发 | 🚧 计划 | — |
 | CSDN | 待开发 | 🚧 计划 | — |
 | 稀土掘金 | 待开发 | 🚧 计划 | — |
@@ -32,6 +33,7 @@
 
 - [安装 X 文章下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/x-article-downloader.js)
 - [安装 Discourse 论坛下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/discourse-downloader.js)
+- [安装 少数派下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/sspai-downloader.js) 🧪 测试版
 
 **方式二：手动复制**
 
