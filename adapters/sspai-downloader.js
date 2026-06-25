@@ -2,7 +2,7 @@
 // @name         少数派文章下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.1.3
+// @version      1.1.4
 // @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown 并下载图片到本地文件夹，含标题、作者、发布时间、正文、图片等。支持 File System Access API 选择保存文件夹。
 // @author       ghoustghoust
 // @match        https://sspai.com/post/*
@@ -182,38 +182,28 @@
   }
 
   /**
-   * 提取文章正文容器（选择包含图片最多的容器）
+   * 提取文章正文容器（只选择正文容器，避免包含作者信息等无关内容）
    */
   function getArticleContent() {
     const selectors = [
-      ".content",
-      ".wangEditor-txt",
-      ".article-content",
-      "article .content",
-      ".post-content",
-      "article"
+      ".wangEditor-txt",    // 少数派正文容器（最优先）
+      ".content",           // 通用正文容器
+      ".article-content",  // 文章内容
+      "article .content", // article 内部的 content
+      ".post-content"     // 帖子内容
     ];
-    let bestEl = null;
-    let bestScore = 0;
     for (const sel of selectors) {
-      const els = document.querySelectorAll(sel);
-      for (const el of els) {
-        if (!el) continue;
-        const textLen = el.innerText.trim().length;
-        if (textLen > 50) {
-          const imgCount = el.querySelectorAll("img").length;
-          const score = textLen + imgCount * 100; // 图片权重高
-          console.log(DEBUG_PREFIX, "候选容器:", sel, "文本:", textLen, "图片:", imgCount, "得分:", score);
-          if (score > bestScore) {
-            bestEl = el;
-            bestScore = score;
-          }
-        }
+      const el = document.querySelector(sel);
+      if (el && el.innerText.trim().length > 50) {
+        console.log(DEBUG_PREFIX, "选择正文容器:", sel, "文本:", el.innerText.trim().length, "图片:", el.querySelectorAll("img").length);
+        return el;
       }
     }
-    if (bestEl) {
-      console.log(DEBUG_PREFIX, "选择容器: 图片数", bestEl.querySelectorAll("img").length, "文本长度", bestEl.innerText.trim().length);
-      return bestEl;
+    // 兜底：如果找不到正文容器，尝试 article 或 body
+    const article = document.querySelector("article");
+    if (article && article.innerText.trim().length > 50) {
+      console.log(DEBUG_PREFIX, "兜底选择 article 容器");
+      return article;
     }
     console.warn(DEBUG_PREFIX, "未找到正文容器，尝试 body");
     return document.body;
@@ -226,16 +216,49 @@
     if (!node) return null;
     const clone = node.cloneNode(true);
 
-    // 删除不需要的元素
+    // 删除不需要的元素（作者卡片、关注按钮、分享、评论等）
     const removeSelectors = [
       "script", "style", "nav", "header", "footer", "aside",
       ".comments", "#comments", ".comment",
       ".sidebar", ".related", ".recommend",
       ".ads", ".ad", ".advertisement",
+      ".author", ".author-card", ".author-info", ".meta-author",
+      ".follow-btn", ".follow-button", ".attention",
+      ".share", ".share-bar", ".social-share",
+      ".like-btn", ".collect-btn", ".report-btn",
+      ".copy-link", ".qr-code", ".wechat-share",
       "#" + BUTTON_ID
     ];
     removeSelectors.forEach(sel => {
       clone.querySelectorAll(sel).forEach(el => el.remove());
+    });
+
+    // 删除基于文本内容的元素（作者信息、关注按钮等）
+    const textRemovePatterns = [
+      /主作者/,
+      /少数派作者/,
+      /联合作者/,
+      /关注/,
+      /分享收藏举报/,
+      /点击下方按钮可复制链接/,
+      /微信扫码分享/,
+      /以图片分享/,
+      /Matrix 首页推荐/,
+      /文章代表作者个人观点/,
+      /下载 .*客户端/,
+      /关注 .*公众号/,
+      /位派友已充电/
+    ];
+    clone.querySelectorAll("div, p, span, section, article").forEach(el => {
+      const text = el.innerText.trim();
+      if (text.length < 200) { // 只检查短文本元素，避免误删正文
+        for (const pattern of textRemovePatterns) {
+          if (pattern.test(text)) {
+            el.remove();
+            break;
+          }
+        }
+      }
     });
 
     return clone;
@@ -244,12 +267,13 @@
   /**
    * 从内容中提取图片列表
    */
+  /**
+   * 提取图片列表（返回原始 URL 和清理 URL）
+   */
   function extractImagesFromContent(node) {
     const images = [];
     const imgs = node.querySelectorAll("img");
     imgs.forEach((img, index) => {
-      // 优先使用 img.src（DOM 属性，浏览器加载后的真实 URL）
-      // 如果 img.src 是占位符或空，再回退到 getAttribute
       let domSrc = img.src || "";
       let attrSrc = img.getAttribute("data-original") ||
                     img.getAttribute("data-original-src") ||
@@ -257,16 +281,14 @@
                     img.getAttribute("data-lazy-src") ||
                     img.getAttribute("src") || "";
       
-      // 选择 DOM 属性（如果有效）或 HTML 属性
-      let src = "";
+      let originalUrl = "";
       if (domSrc && !domSrc.startsWith("data:")) {
-        src = domSrc;
+        originalUrl = domSrc;
       } else if (attrSrc && !attrSrc.startsWith("data:")) {
-        src = attrSrc;
+        originalUrl = attrSrc;
       }
       
-      // 如果都没有，尝试 srcset
-      if (!src) {
+      if (!originalUrl) {
         const srcset = img.getAttribute("srcset");
         if (srcset) {
           const candidates = srcset.split(',').map(s => {
@@ -276,20 +298,23 @@
             return { url, w };
           }).filter(c => c.url && !c.url.startsWith("data:"));
           candidates.sort((a, b) => b.w - a.w);
-          if (candidates.length > 0) src = candidates[0].url;
+          if (candidates.length > 0) originalUrl = candidates[0].url;
         }
       }
       
-      if (!src) return; // 空或占位符，跳过
+      if (!originalUrl) return;
       
       try {
-        src = new URL(src, location.href).href;
+        originalUrl = new URL(originalUrl, location.href).href;
       } catch (e) {}
-      // 清理少数派 CDN 参数，确保与 Turndown 规则一致
-      if (src.includes("cdnfile.sspai.com") && (src.includes("imageView2") || src.includes("imageMogr2"))) {
-        src = src.replace(/\?(imageView2|imageMogr2).*$/, "");
+      
+      // 清理后的 URL（用于下载）
+      let cleanUrl = originalUrl;
+      if (cleanUrl.includes("cdnfile.sspai.com") && (cleanUrl.includes("imageView2") || cleanUrl.includes("imageMogr2"))) {
+        cleanUrl = cleanUrl.replace(/\?(imageView2|imageMogr2).*$/, "");
       }
-      images.push({ url: src, index });
+      
+      images.push({ originalUrl, cleanUrl, index });
     });
     return images;
   }
@@ -388,13 +413,22 @@
     td.addRule("sspaiImage", {
       filter: "img",
       replacement: (content, node) => {
-        let src = node.getAttribute("data-original") ||
-                  node.getAttribute("data-original-src") ||
-                  node.getAttribute("data-src") ||
-                  node.getAttribute("data-lazy-src") ||
-                  node.getAttribute("src") || "";
-
-        if (!src || src.startsWith("data:")) {
+        // 使用与 extractImagesFromContent 完全相同的 URL 提取逻辑
+        let domSrc = node.src || "";
+        let attrSrc = node.getAttribute("data-original") ||
+                      node.getAttribute("data-original-src") ||
+                      node.getAttribute("data-src") ||
+                      node.getAttribute("data-lazy-src") ||
+                      node.getAttribute("src") || "";
+        
+        let src = "";
+        if (domSrc && !domSrc.startsWith("data:")) {
+          src = domSrc;
+        } else if (attrSrc && !attrSrc.startsWith("data:")) {
+          src = attrSrc;
+        }
+        
+        if (!src) {
           const srcset = node.getAttribute("srcset");
           if (srcset) {
             const candidates = srcset.split(',').map(s => {
@@ -407,22 +441,24 @@
             if (candidates.length > 0) src = candidates[0].url;
           }
         }
-
+        
         if (!src || src.startsWith("data:")) return "";
-
+        
+        // 转换为绝对路径（与 extractImagesFromContent 一致）
         try {
           src = new URL(src, location.href).href;
         } catch (e) {}
-
-        if (src.includes("cdnfile.sspai.com") && src.includes("imageView2")) {
-          src = src.replace(/\?imageView2.*$/, "");
+        
+        // 清理 CDN 参数（与 extractImagesFromContent 一致：支持 imageMogr2 和 imageView2）
+        if (src.includes("cdnfile.sspai.com") && (src.includes("imageView2") || src.includes("imageMogr2"))) {
+          src = src.replace(/\?(imageView2|imageMogr2).*$/, "");
         }
-
+        
         // 如果该图片在 imageMap 中有映射，使用本地路径
         if (imageMap && imageMap[src]) {
           src = imageMap[src];
         }
-
+        
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
         return `\n\n![${alt}](${src})\n\n`;
       }
@@ -530,10 +566,10 @@
     const cleanedImages = extractImagesFromContent(cleaned);
     console.log(DEBUG_PREFIX, "从 cleaned DOM 检测到图片数量:", cleanedImages.length);
     
-    // 合并图片列表，去重
+    // 合并图片列表，去重（使用 originalUrl 作为键）
     const allImagesMap = {};
     [...images, ...cleanedImages].forEach(img => {
-      allImagesMap[img.url] = img;
+      allImagesMap[img.originalUrl] = img;
     });
     const allImages = Object.values(allImagesMap);
     console.log(DEBUG_PREFIX, "合并后图片数量:", allImages.length);
@@ -563,21 +599,21 @@
 
         for (let i = 0; i < allImages.length; i++) {
           const img = allImages[i];
-          const ext = getExtensionFromUrl(img.url);
+          const ext = getExtensionFromUrl(img.cleanUrl);
           const filename = generateImageFilename(dateStr, title, i + 1) + "." + ext;
 
-          console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${allImages.length}:`, img.url.slice(0, 80));
+          console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${allImages.length}:`, img.cleanUrl.slice(0, 80));
 
           try {
-            const blob = await downloadImageWithGM(img.url);
+            const blob = await downloadImageWithGM(img.cleanUrl);
             await saveBlobToFolder(blob, filename, imagesFolder);
-            imageMap[img.url] = "images/" + filename;
+            imageMap[img.cleanUrl] = "images/" + filename;
             successCount++;
             console.log(DEBUG_PREFIX, "图片下载成功:", filename, "大小:", Math.round(blob.size / 1024), "KB");
           } catch (err) {
             failCount++;
-            console.error(DEBUG_PREFIX, "图片下载失败:", img.url, "错误:", err.message);
-            imageMap[img.url] = img.url; // 失败时保留原 URL
+            console.error(DEBUG_PREFIX, "图片下载失败:", img.cleanUrl, "错误:", err.message);
+            imageMap[img.cleanUrl] = img.originalUrl; // 失败时保留原 URL
           }
         }
 
