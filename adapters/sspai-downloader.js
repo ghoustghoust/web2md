@@ -2,7 +2,7 @@
 // @name         少数派文章下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.1.1
+// @version      1.1.3
 // @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown 并下载图片到本地文件夹，含标题、作者、发布时间、正文、图片等。支持 File System Access API 选择保存文件夹。
 // @author       ghoustghoust
 // @match        https://sspai.com/post/*
@@ -14,6 +14,9 @@
 // @homepageURL  https://github.com/ghoustghoust/web2md
 // @supportURL   https://github.com/ghoustghoust/web2md/issues
 // @connect      unpkg.com
+// @connect      cdnfile.sspai.com
+// @connect      sspai.com
+// @connect      *
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
 // ==/UserScript==
 
@@ -179,7 +182,7 @@
   }
 
   /**
-   * 提取文章正文容器（多套选择器备选）
+   * 提取文章正文容器（选择包含图片最多的容器）
    */
   function getArticleContent() {
     const selectors = [
@@ -190,12 +193,27 @@
       ".post-content",
       "article"
     ];
+    let bestEl = null;
+    let bestScore = 0;
     for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && el.innerText.trim().length > 50) {
-        console.log(DEBUG_PREFIX, "找到正文容器:", sel, "长度:", el.innerText.trim().length);
-        return el;
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        if (!el) continue;
+        const textLen = el.innerText.trim().length;
+        if (textLen > 50) {
+          const imgCount = el.querySelectorAll("img").length;
+          const score = textLen + imgCount * 100; // 图片权重高
+          console.log(DEBUG_PREFIX, "候选容器:", sel, "文本:", textLen, "图片:", imgCount, "得分:", score);
+          if (score > bestScore) {
+            bestEl = el;
+            bestScore = score;
+          }
+        }
       }
+    }
+    if (bestEl) {
+      console.log(DEBUG_PREFIX, "选择容器: 图片数", bestEl.querySelectorAll("img").length, "文本长度", bestEl.innerText.trim().length);
+      return bestEl;
     }
     console.warn(DEBUG_PREFIX, "未找到正文容器，尝试 body");
     return document.body;
@@ -230,13 +248,25 @@
     const images = [];
     const imgs = node.querySelectorAll("img");
     imgs.forEach((img, index) => {
-      let src = img.getAttribute("data-original") ||
-                img.getAttribute("data-original-src") ||
-                img.getAttribute("data-src") ||
-                img.getAttribute("data-lazy-src") ||
-                img.getAttribute("src") || "";
-
-      if (!src || src.startsWith("data:")) {
+      // 优先使用 img.src（DOM 属性，浏览器加载后的真实 URL）
+      // 如果 img.src 是占位符或空，再回退到 getAttribute
+      let domSrc = img.src || "";
+      let attrSrc = img.getAttribute("data-original") ||
+                    img.getAttribute("data-original-src") ||
+                    img.getAttribute("data-src") ||
+                    img.getAttribute("data-lazy-src") ||
+                    img.getAttribute("src") || "";
+      
+      // 选择 DOM 属性（如果有效）或 HTML 属性
+      let src = "";
+      if (domSrc && !domSrc.startsWith("data:")) {
+        src = domSrc;
+      } else if (attrSrc && !attrSrc.startsWith("data:")) {
+        src = attrSrc;
+      }
+      
+      // 如果都没有，尝试 srcset
+      if (!src) {
         const srcset = img.getAttribute("srcset");
         if (srcset) {
           const candidates = srcset.split(',').map(s => {
@@ -249,17 +279,17 @@
           if (candidates.length > 0) src = candidates[0].url;
         }
       }
-
-      if (src && !src.startsWith("data:")) {
-        try {
-          src = new URL(src, location.href).href;
-        } catch (e) {}
-        // 清理少数派 CDN 参数，确保与 Turndown 规则一致
-        if (src.includes("cdnfile.sspai.com") && src.includes("imageView2")) {
-          src = src.replace(/\?imageView2.*$/, "");
-        }
-        images.push({ url: src, index });
+      
+      if (!src) return; // 空或占位符，跳过
+      
+      try {
+        src = new URL(src, location.href).href;
+      } catch (e) {}
+      // 清理少数派 CDN 参数，确保与 Turndown 规则一致
+      if (src.includes("cdnfile.sspai.com") && (src.includes("imageView2") || src.includes("imageMogr2"))) {
+        src = src.replace(/\?(imageView2|imageMogr2).*$/, "");
       }
+      images.push({ url: src, index });
     });
     return images;
   }
@@ -486,21 +516,33 @@
         return;
       }
 
-      const cleaned = cleanContent(contentEl);
-      if (!cleaned) {
-        alert("下载器：正文清理失败。");
-        return;
-      }
+    // 先从原始 DOM 提取图片（避免 cleanContent 删除）
+    const images = extractImagesFromContent(contentEl);
+    console.log(DEBUG_PREFIX, "从原始 DOM 检测到图片数量:", images.length);
 
-      // 提取图片列表
-      const images = extractImagesFromContent(cleaned);
-      console.log(DEBUG_PREFIX, "检测到图片数量:", images.length);
+    const cleaned = cleanContent(contentEl);
+    if (!cleaned) {
+      alert("下载器：正文清理失败。");
+      return;
+    }
+    
+    // 再从 cleaned 中提取图片（浏览器可能在此期间加载了更多图片）
+    const cleanedImages = extractImagesFromContent(cleaned);
+    console.log(DEBUG_PREFIX, "从 cleaned DOM 检测到图片数量:", cleanedImages.length);
+    
+    // 合并图片列表，去重
+    const allImagesMap = {};
+    [...images, ...cleanedImages].forEach(img => {
+      allImagesMap[img.url] = img;
+    });
+    const allImages = Object.values(allImagesMap);
+    console.log(DEBUG_PREFIX, "合并后图片数量:", allImages.length);
 
       // 选择文件夹（如果浏览器支持且有图片）
       let dirHandle = null;
       let imageMap = {};
 
-      if (images.length > 0) {
+      if (allImages.length > 0) {
         dirHandle = await showFolderPicker();
       }
 
@@ -514,17 +556,17 @@
       }
 
       // 下载图片到文件夹
-      if (dirHandle && images.length > 0) {
+      if (dirHandle && allImages.length > 0) {
         const imagesFolder = await dirHandle.getDirectoryHandle("images", { create: true });
         let successCount = 0;
         let failCount = 0;
 
-        for (let i = 0; i < images.length; i++) {
-          const img = images[i];
+        for (let i = 0; i < allImages.length; i++) {
+          const img = allImages[i];
           const ext = getExtensionFromUrl(img.url);
           const filename = generateImageFilename(dateStr, title, i + 1) + "." + ext;
 
-          console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${images.length}:`, img.url.slice(0, 80));
+          console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${allImages.length}:`, img.url.slice(0, 80));
 
           try {
             const blob = await downloadImageWithGM(img.url);
@@ -539,7 +581,7 @@
           }
         }
 
-        console.log(DEBUG_PREFIX, "图片下载统计:", successCount, "成功,", failCount, "失败, 共", images.length, "张");
+        console.log(DEBUG_PREFIX, "图片下载统计:", successCount, "成功,", failCount, "失败, 共", allImages.length, "张");
       }
 
       const td = createTurndownService(imageMap);
