@@ -2,13 +2,13 @@
 // @name         少数派文章下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.0.0
-// @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown，含标题、作者、发布时间、正文、图片等
+// @version      1.1.1
+// @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown 并下载图片到本地文件夹，含标题、作者、发布时间、正文、图片等。支持 File System Access API 选择保存文件夹。
 // @author       ghoustghoust
 // @match        https://sspai.com/post/*
 // @match        https://sspai.com/matrix
 // @license      MIT
-// @grant        none
+// @grant        GM_xmlhttpRequest
 // @run-at       document-idle
 // @noframes
 // @homepageURL  https://github.com/ghoustghoust/web2md
@@ -18,6 +18,20 @@
 // ==/UserScript==
 
 /** 更新日志
+ * 1.1.1: 修复图片下载问题
+ *    - 修复 imageMap URL 键不匹配：extractImagesFromContent 也做 imageView2 清理，
+ *      确保与 Turndown 规则中的 URL 处理一致
+ *    - 修复 GM_xmlhttpRequest 缺少 Referer 头：添加 Referer: location.href，
+ *      解决少数派 CDN 403 防盗链问题
+ *    - fetch 回退也添加 Referer 头
+ *    - 增强调试日志：显示每张图片的下载进度、成功/失败统计
+ * 1.1.0: 支持图片下载到本地文件夹
+ *    - 新增 File System Access API 支持，点击下载后弹窗选择保存文件夹
+ *    - 浏览器内直接下载图片（使用 GM_xmlhttpRequest 跨域，带正确 Referer）
+ *    - 图片保存到选择的文件夹下的 images/ 子文件夹
+ *    - 图片文件名格式：YYYYMMDD-文章标题-序号.扩展名
+ *    - Markdown 中图片路径自动替换为相对路径（images/xxx.png）
+ *    - 如果浏览器不支持 File System Access API，回退到 blob 下载方式
  * 1.0.0: 初始版本
  *    - 支持少数派文章页（sspai.com/post/*）和矩阵页（sspai.com/matrix）
  *    - 提取标题、作者、发布时间、正文、图片
@@ -210,9 +224,128 @@
   }
 
   /**
+   * 从内容中提取图片列表
+   */
+  function extractImagesFromContent(node) {
+    const images = [];
+    const imgs = node.querySelectorAll("img");
+    imgs.forEach((img, index) => {
+      let src = img.getAttribute("data-original") ||
+                img.getAttribute("data-original-src") ||
+                img.getAttribute("data-src") ||
+                img.getAttribute("data-lazy-src") ||
+                img.getAttribute("src") || "";
+
+      if (!src || src.startsWith("data:")) {
+        const srcset = img.getAttribute("srcset");
+        if (srcset) {
+          const candidates = srcset.split(',').map(s => {
+            const parts = s.trim().split(/\s+/);
+            const url = parts[0];
+            const w = parts[1] ? parseInt(parts[1].replace(/[^0-9]/g, '')) : 0;
+            return { url, w };
+          }).filter(c => c.url && !c.url.startsWith("data:"));
+          candidates.sort((a, b) => b.w - a.w);
+          if (candidates.length > 0) src = candidates[0].url;
+        }
+      }
+
+      if (src && !src.startsWith("data:")) {
+        try {
+          src = new URL(src, location.href).href;
+        } catch (e) {}
+        // 清理少数派 CDN 参数，确保与 Turndown 规则一致
+        if (src.includes("cdnfile.sspai.com") && src.includes("imageView2")) {
+          src = src.replace(/\?imageView2.*$/, "");
+        }
+        images.push({ url: src, index });
+      }
+    });
+    return images;
+  }
+
+  /**
+   * 从 URL 提取文件扩展名
+   */
+  function getExtensionFromUrl(url) {
+    if (!url) return "jpg";
+    const match = url.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
+    return match ? match[1].toLowerCase() : "jpg";
+  }
+
+  /**
+   * 生成图片文件名：日期-文章标题-序号
+   */
+  function generateImageFilename(dateStr, title, index) {
+    const safeTitle = sanitizeFilename(title).slice(0, 30);
+    return `${dateStr}-${safeTitle}-${String(index).padStart(3, '0')}`;
+  }
+
+  /**
+   * 使用 GM_xmlhttpRequest 下载图片（支持跨域）
+   */
+  function downloadImageWithGM(url) {
+    return new Promise((resolve, reject) => {
+      if (typeof GM_xmlhttpRequest !== "undefined") {
+        GM_xmlhttpRequest({
+          method: "GET",
+          url: url,
+          responseType: "blob",
+          headers: {
+            "Referer": location.href
+          },
+          onload: function(response) {
+            if (response.status === 200) {
+              resolve(response.response);
+            } else {
+              reject(new Error("HTTP " + response.status + " for " + url));
+            }
+          },
+          onerror: function(err) {
+            reject(new Error("Failed to download " + url));
+          }
+        });
+      } else {
+        fetch(url, { headers: { "Referer": location.href } })
+          .then(r => {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.blob();
+          })
+          .then(resolve)
+          .catch(reject);
+      }
+    });
+  }
+
+  /**
+   * 使用 File System Access API 选择文件夹
+   */
+  async function showFolderPicker() {
+    try {
+      if (typeof window.showDirectoryPicker === "function") {
+        const dirHandle = await window.showDirectoryPicker();
+        return dirHandle;
+      }
+    } catch (err) {
+      console.log(DEBUG_PREFIX, "用户取消文件夹选择或浏览器不支持:", err.message);
+    }
+    return null;
+  }
+
+  /**
+   * 保存 Blob 到文件系统
+   */
+  async function saveBlobToFolder(blob, filename, folderHandle) {
+    const fileHandle = await folderHandle.getFileHandle(filename, { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+  }
+
+  /**
    * 创建 TurndownService 实例
    */
-  function createTurndownService() {
+  function createTurndownService(imageMap) {
     const td = new TurndownService({
       headingStyle: "atx",
       codeBlockStyle: "fenced",
@@ -221,20 +354,17 @@
       strongDelimiter: "**"
     });
 
-    // 图片：保留 alt，转绝对路径，过滤占位符
+    // 图片：保留 alt，转绝对路径，过滤占位符，支持本地路径映射
     td.addRule("sspaiImage", {
       filter: "img",
       replacement: (content, node) => {
-        // 按优先级尝试获取真实图片 URL
-        let src = node.getAttribute("data-original") || 
-                  node.getAttribute("data-original-src") || 
-                  node.getAttribute("data-src") || 
-                  node.getAttribute("data-lazy-src") || 
+        let src = node.getAttribute("data-original") ||
+                  node.getAttribute("data-original-src") ||
+                  node.getAttribute("data-src") ||
+                  node.getAttribute("data-lazy-src") ||
                   node.getAttribute("src") || "";
-        
-        // 过滤 base64 占位符和空值
+
         if (!src || src.startsWith("data:")) {
-          // 尝试从 srcset 提取
           const srcset = node.getAttribute("srcset");
           if (srcset) {
             const candidates = srcset.split(',').map(s => {
@@ -247,21 +377,22 @@
             if (candidates.length > 0) src = candidates[0].url;
           }
         }
-        
+
         if (!src || src.startsWith("data:")) return "";
-        
-        // 转换为绝对路径
+
         try {
           src = new URL(src, location.href).href;
-        } catch (e) {
-          // 保持原样
-        }
-        
-        // 清理少数派 CDN 参数，获取原图（去掉 imageView2 压缩参数）
+        } catch (e) {}
+
         if (src.includes("cdnfile.sspai.com") && src.includes("imageView2")) {
           src = src.replace(/\?imageView2.*$/, "");
         }
-        
+
+        // 如果该图片在 imageMap 中有映射，使用本地路径
+        if (imageMap && imageMap[src]) {
+          src = imageMap[src];
+        }
+
         const alt = (node.getAttribute("alt") || "Image").replace(/[\[\]]/g, "");
         return `\n\n![${alt}](${src})\n\n`;
       }
@@ -327,7 +458,7 @@
   /**
    * 下载单篇文章
    */
-  function downloadArticle() {
+  async function downloadArticle() {
     if (typeof TurndownService === "undefined") {
       alert("下载器：Turndown 库未加载，请检查网络或刷新页面后再试。");
       console.error(DEBUG_PREFIX, "TurndownService 未定义");
@@ -361,7 +492,57 @@
         return;
       }
 
-      const td = createTurndownService();
+      // 提取图片列表
+      const images = extractImagesFromContent(cleaned);
+      console.log(DEBUG_PREFIX, "检测到图片数量:", images.length);
+
+      // 选择文件夹（如果浏览器支持且有图片）
+      let dirHandle = null;
+      let imageMap = {};
+
+      if (images.length > 0) {
+        dirHandle = await showFolderPicker();
+      }
+
+      // 获取日期字符串
+      let dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+      if (time) {
+        const dateMatch = time.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (dateMatch) {
+          dateStr = dateMatch[1] + dateMatch[2] + dateMatch[3];
+        }
+      }
+
+      // 下载图片到文件夹
+      if (dirHandle && images.length > 0) {
+        const imagesFolder = await dirHandle.getDirectoryHandle("images", { create: true });
+        let successCount = 0;
+        let failCount = 0;
+
+        for (let i = 0; i < images.length; i++) {
+          const img = images[i];
+          const ext = getExtensionFromUrl(img.url);
+          const filename = generateImageFilename(dateStr, title, i + 1) + "." + ext;
+
+          console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${images.length}:`, img.url.slice(0, 80));
+
+          try {
+            const blob = await downloadImageWithGM(img.url);
+            await saveBlobToFolder(blob, filename, imagesFolder);
+            imageMap[img.url] = "images/" + filename;
+            successCount++;
+            console.log(DEBUG_PREFIX, "图片下载成功:", filename, "大小:", Math.round(blob.size / 1024), "KB");
+          } catch (err) {
+            failCount++;
+            console.error(DEBUG_PREFIX, "图片下载失败:", img.url, "错误:", err.message);
+            imageMap[img.url] = img.url; // 失败时保留原 URL
+          }
+        }
+
+        console.log(DEBUG_PREFIX, "图片下载统计:", successCount, "成功,", failCount, "失败, 共", images.length, "张");
+      }
+
+      const td = createTurndownService(imageMap);
       const markdown = td.turndown(cleaned.innerHTML);
 
       // 组装最终 Markdown
@@ -377,22 +558,34 @@
         `---\n\n` +
         markdown;
 
-      const filename = `【少数派】${sanitizeFilename(title).slice(0, 120)}${timeStr}.md`;
+      if (dirHandle) {
+        // 保存 Markdown 到选择的文件夹
+        const mdFilename = sanitizeFilename(title).slice(0, 120) + ".md";
+        const mdFile = await dirHandle.getFileHandle(mdFilename, { create: true });
+        const writable = await mdFile.createWritable();
+        await writable.write("\uFEFF" + finalMarkdown);
+        await writable.close();
+        console.log(DEBUG_PREFIX, "文件保存完成:", mdFilename, "图片数:", images.length);
+        alert("下载完成！\n\nMarkdown 和图片已保存到选择的文件夹\n图片保存在 images/ 子文件夹");
+      } else {
+        // 回退：使用 blob 下载（旧方式）
+        const filename = `【少数派】${sanitizeFilename(title).slice(0, 120)}${timeStr}.md`;
 
-      const blob = new Blob(["\uFEFF" + finalMarkdown], { type: "text/markdown;charset=utf-8" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.rel = "noopener";
-      document.body.appendChild(link);
-      link.click();
+        const blob = new Blob(["\uFEFF" + finalMarkdown], { type: "text/markdown;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = filename;
+        link.rel = "noopener";
+        document.body.appendChild(link);
+        link.click();
 
-      setTimeout(() => {
-        URL.revokeObjectURL(link.href);
-        if (link.parentNode) link.remove();
-      }, 5000);
+        setTimeout(() => {
+          URL.revokeObjectURL(link.href);
+          if (link.parentNode) link.remove();
+        }, 5000);
 
-      console.log(DEBUG_PREFIX, "文章下载完成:", filename);
+        console.log(DEBUG_PREFIX, "文章下载完成（blob 方式）:", filename, "图片数:", images.length);
+      }
 
     } catch (err) {
       console.error(DEBUG_PREFIX, "导出失败:", err);
@@ -585,6 +778,6 @@
   window.addEventListener("hashchange", ensureButton);
 
   // 初始化
-  console.log(DEBUG_PREFIX, "少数派下载器已加载（v1.0.0）");
+  console.log(DEBUG_PREFIX, "少数派下载器已加载（v1.1.0）");
   ensureButton();
 })();
