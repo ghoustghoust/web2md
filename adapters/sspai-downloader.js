@@ -2,7 +2,7 @@
 // @name         少数派文章下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.1.4
+// @version      1.1.8
 // @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown 并下载图片到本地文件夹，含标题、作者、发布时间、正文、图片等。支持 File System Access API 选择保存文件夹。
 // @author       ghoustghoust
 // @match        https://sspai.com/post/*
@@ -21,26 +21,37 @@
 // ==/UserScript==
 
 /** 更新日志
+ * 1.1.5: 修复图片扩展名和下载完整性
+ *    - getExtensionFromUrl: 优先从 Blob MIME type 推断扩展名（更可靠）
+ *    - 统一扩展名：jpeg/jpe → jpg
+ *    - downloadImageWithGM: 返回 { blob, type } 包含 MIME type
+ *    - 下载循环使用 Blob type 确定实际文件扩展名，避免 URL 扩展名与实际不符
+ * 1.1.4: 修复图片下载和正文容器选择
+ *    - getArticleContent: 只选择正文容器（.wangEditor-txt, .content），避免包含作者信息
+ *    - Turndown 图片规则：使用与 extractImagesFromContent 相同的 URL 提取逻辑（node.src）
+ *    - imageMap: 使用 cleanUrl 作为键（匹配 Turndown 清理后的 URL）
+ *    - cleanContent: 基于文本内容删除作者信息、关注按钮、分享按钮等
+ * 1.1.3: 修复图片提取和下载问题
+ *    - extractImagesFromContent: 优先使用 img.src（DOM 属性）获取真实 URL
+ *    - extractImagesFromContent: 支持 imageMogr2 参数清理
+ *    - downloadArticle: 从原始 DOM 和 cleaned DOM 合并提取图片
+ *    - 使用 allImages 而非 images 进行下载循环
+ *    - 添加 @connect cdnfile.sspai.com 允许跨域请求（解决 Tampermonkey 拦截）
+ * 1.1.2: 修复图片提取逻辑
+ *    - getArticleContent: 选择包含图片最多的容器（评分机制）
+ *    - downloadArticle: 先提取图片再 cleanContent，避免克隆导致图片丢失
  * 1.1.1: 修复图片下载问题
- *    - 修复 imageMap URL 键不匹配：extractImagesFromContent 也做 imageView2 清理，
- *      确保与 Turndown 规则中的 URL 处理一致
- *    - 修复 GM_xmlhttpRequest 缺少 Referer 头：添加 Referer: location.href，
- *      解决少数派 CDN 403 防盗链问题
- *    - fetch 回退也添加 Referer 头
- *    - 增强调试日志：显示每张图片的下载进度、成功/失败统计
+ *    - 修复 imageMap URL 键不匹配
+ *    - 修复 GM_xmlhttpRequest 缺少 Referer 头
+ *    - 增强调试日志
  * 1.1.0: 支持图片下载到本地文件夹
- *    - 新增 File System Access API 支持，点击下载后弹窗选择保存文件夹
- *    - 浏览器内直接下载图片（使用 GM_xmlhttpRequest 跨域，带正确 Referer）
- *    - 图片保存到选择的文件夹下的 images/ 子文件夹
- *    - 图片文件名格式：YYYYMMDD-文章标题-序号.扩展名
- *    - Markdown 中图片路径自动替换为相对路径（images/xxx.png）
- *    - 如果浏览器不支持 File System Access API，回退到 blob 下载方式
+ *    - 新增 File System Access API 支持
+ *    - 浏览器内直接下载图片（带正确 Referer）
+ *    - 图片保存到 images/ 子文件夹，文件名：YYYYMMDD-标题-序号
  * 1.0.0: 初始版本
- *    - 支持少数派文章页（sspai.com/post/*）和矩阵页（sspai.com/matrix）
+ *    - 支持少数派文章页和矩阵页
  *    - 提取标题、作者、发布时间、正文、图片
- *    - 使用 Turndown 转换 HTML 为 Markdown，保留格式
- *    - 右下角悬浮按钮，支持文章页和矩阵页
- *    - 矩阵页：提取文章列表（标题+链接），不下载单篇文章内容
+ *    - 右下角悬浮按钮
  */
 
 (function () {
@@ -322,10 +333,28 @@
   /**
    * 从 URL 提取文件扩展名
    */
-  function getExtensionFromUrl(url) {
+  function getExtensionFromUrl(url, blobType) {
     if (!url) return "jpg";
+    // 优先从 Blob 类型推断（清理 ; 后面的参数）
+    if (blobType) {
+      const cleanType = blobType.split(";")[0].trim().toLowerCase();
+      const typeMap = {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/gif": "gif",
+        "image/webp": "webp",
+        "image/svg+xml": "svg"
+      };
+      const ext = typeMap[cleanType];
+      if (ext) return ext;
+    }
+    // 从 URL 提取
     const match = url.match(/\.([a-zA-Z0-9]+)(?:\?.*)?$/);
-    return match ? match[1].toLowerCase() : "jpg";
+    let ext = match ? match[1].toLowerCase() : "jpg";
+    // 统一扩展名
+    const extMap = { "jpeg": "jpg", "jpe": "jpg" };
+    return extMap[ext] || ext;
   }
 
   /**
@@ -338,6 +367,7 @@
 
   /**
    * 使用 GM_xmlhttpRequest 下载图片（支持跨域）
+   * 返回 { blob, type } 对象，type 是 MIME type
    */
   function downloadImageWithGM(url) {
     return new Promise((resolve, reject) => {
@@ -351,7 +381,14 @@
           },
           onload: function(response) {
             if (response.status === 200) {
-              resolve(response.response);
+              const blob = response.response;
+              // 从响应头或 blob type 获取 MIME type
+              let type = blob.type || "";
+              if (!type && response.responseHeaders) {
+                const match = response.responseHeaders.match(/content-type:\s*([^\s;]+)/i);
+                if (match) type = match[1];
+              }
+              resolve({ blob, type });
             } else {
               reject(new Error("HTTP " + response.status + " for " + url));
             }
@@ -364,7 +401,10 @@
         fetch(url, { headers: { "Referer": location.href } })
           .then(r => {
             if (!r.ok) throw new Error("HTTP " + r.status);
-            return r.blob();
+            const contentType = r.headers.get("content-type") || "";
+            // 提取主 MIME type（去掉 ; 后面的参数）
+            const type = contentType.split(";")[0].trim();
+            return r.blob().then(blob => ({ blob, type }));
           })
           .then(resolve)
           .catch(reject);
@@ -552,27 +592,24 @@
         return;
       }
 
-    // 先从原始 DOM 提取图片（避免 cleanContent 删除）
-    const images = extractImagesFromContent(contentEl);
-    console.log(DEBUG_PREFIX, "从原始 DOM 检测到图片数量:", images.length);
-
     const cleaned = cleanContent(contentEl);
     if (!cleaned) {
       alert("下载器：正文清理失败。");
       return;
     }
     
-    // 再从 cleaned 中提取图片（浏览器可能在此期间加载了更多图片）
+    // 从 cleaned DOM 中提取图片（顺序和 Turndown 处理顺序一致）
     const cleanedImages = extractImagesFromContent(cleaned);
     console.log(DEBUG_PREFIX, "从 cleaned DOM 检测到图片数量:", cleanedImages.length);
     
-    // 合并图片列表，去重（使用 originalUrl 作为键）
-    const allImagesMap = {};
-    [...images, ...cleanedImages].forEach(img => {
-      allImagesMap[img.originalUrl] = img;
-    });
-    const allImages = Object.values(allImagesMap);
-    console.log(DEBUG_PREFIX, "合并后图片数量:", allImages.length);
+    // 如果 cleaned DOM 没有图片，回退到原始 DOM
+    let allImages = cleanedImages;
+    if (allImages.length === 0) {
+      allImages = extractImagesFromContent(contentEl);
+      console.log(DEBUG_PREFIX, "回退到原始 DOM 图片数量:", allImages.length);
+    }
+    
+    console.log(DEBUG_PREFIX, "最终图片数量:", allImages.length);
 
       // 选择文件夹（如果浏览器支持且有图片）
       let dirHandle = null;
@@ -599,17 +636,25 @@
 
         for (let i = 0; i < allImages.length; i++) {
           const img = allImages[i];
-          const ext = getExtensionFromUrl(img.cleanUrl);
-          const filename = generateImageFilename(dateStr, title, i + 1) + "." + ext;
-
+          
           console.log(DEBUG_PREFIX, `正在下载图片 ${i + 1}/${allImages.length}:`, img.cleanUrl.slice(0, 80));
 
           try {
-            const blob = await downloadImageWithGM(img.cleanUrl);
+            const { blob, type } = await downloadImageWithGM(img.cleanUrl);
+            // 验证下载内容是否为有效图片（至少 100 字节）
+            if (blob.size < 100) {
+              throw new Error("下载内容太小 (" + blob.size + " bytes)，可能不是有效图片");
+            }
+            // 验证 MIME type 是否为图片
+            if (!type || !type.startsWith("image/")) {
+              throw new Error("下载内容类型不是图片: " + type);
+            }
+            const ext = getExtensionFromUrl(img.cleanUrl, type);
+            const filename = generateImageFilename(dateStr, title, i + 1) + "." + ext;
             await saveBlobToFolder(blob, filename, imagesFolder);
             imageMap[img.cleanUrl] = "images/" + filename;
             successCount++;
-            console.log(DEBUG_PREFIX, "图片下载成功:", filename, "大小:", Math.round(blob.size / 1024), "KB");
+            console.log(DEBUG_PREFIX, "图片下载成功:", filename, "类型:", type, "大小:", Math.round(blob.size / 1024), "KB");
           } catch (err) {
             failCount++;
             console.error(DEBUG_PREFIX, "图片下载失败:", img.cleanUrl, "错误:", err.message);
