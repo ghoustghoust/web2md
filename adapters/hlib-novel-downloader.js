@@ -1,603 +1,417 @@
 // ==UserScript==
-// @name         hlib.cc 小说下载器
+// @name         hlib.cc 小说下载器（自动翻页合并版）
 // @namespace    https://github.com/ghoustghoust/web2md
-// @source       https://github.com/ghoustghoust/web2md
-// @version      1.0.0
-// @description  适用于 hlib.cc 小说阅读页：一键下载小说章节，支持多页自动翻页合并，生成适合手机阅读的 Markdown 格式
-// @author       ghoustghoust
+// @version      2.0.0
+// @description  hlib.cc 小说下载器：一键自动翻页合并整章，生成适合手机阅读的 Markdown。支持手动单页保存（localStorage）和自动翻页合并两种模式。
+// @author       ghoustghoust（基于 xzyl4303 原版改进）
 // @match        https://hlib.cc/n/*
 // @license      MIT
 // @grant        GM_xmlhttpRequest
-// @run-at       document-idle
-// @noframes
+// @connect      hlib.cc
 // @homepageURL  https://github.com/ghoustghoust/web2md
 // @supportURL   https://github.com/ghoustghoust/web2md/issues
-// @connect      hlib.cc
 // ==/UserScript==
 
 /** 更新日志
- * 1.0.0: 初始版本
- *    - 支持 hlib.cc 小说阅读页（/n/*）
- *    - 自动翻页合并：检测"下一页"链接，fetch 多页内容合并
- *    - 提取 #content 容器作为正文，清理广告和导航
- *    - 输出 Markdown 格式，适合手机阅读（正确段落换行、保留章节标题）
- *    - 生成目录（TOC）对应章节标题
- *    - 右下角悬浮按钮，支持页面路由切换
+ * 2.0.0: 基于 xzyl4303 原版重写，功能清晰化 + 自动翻页合并
+ *    ① 新增【自动翻页合并】：一键 fetch 所有分页，合并为一个 Markdown 文件
+ *    ② 保留【手动保存】：逐页点击保存到 localStorage，适合需要筛选内容的场景
+ *    ③ 改进 UI：按钮功能标注清晰，避免意义不明
+ *    ④ 输出 Markdown 格式：正确段落换行、生成目录（TOC）、适合手机阅读
+ *    ⑤ 自动检测正文容器：支持 #content 和 .text-center.m-3 标题提取
+ * 1.0: xzyl4303 原版（GreasyFork）
+ *    - 手动保存/清除/下载/下一页/下一章功能
+ *    - 快捷键支持（Shift+S/T/N/M/Backspace）
  */
 
-(function () {
-  "use strict";
+(function() {
+    'use strict';
 
-  const BUTTON_ID = "hlib-downloader-floating-button";
-  const DEBUG_PREFIX = "[下载器]";
-  const MAX_PAGES = 100; // 最大翻页数，防止无限循环
+    const DEBUG_PREFIX = "[hlib下载器]";
+    const MAX_PAGES = 100; // 最大翻页数，防止无限循环
 
-  /**
-   * 清洗文件名中的非法字符
-   */
-  function sanitizeFilename(str) {
-    if (!str) return "untitled";
-    return str
-      .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
-      .replace(/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i, "_$1$2")
-      .trim();
-  }
+    // ========== 工具函数 ==========
 
-  /**
-   * 创建悬浮按钮
-   */
-  function makeButton(buttonText) {
-    const $button = document.createElement("button");
-    $button.id = BUTTON_ID;
-    $button.setAttribute("type", "button");
-    $button.innerText = buttonText;
-    $button.setAttribute("title", "点击下载当前章节（自动翻页合并）");
-    $button.style.position = "fixed";
-    $button.style.bottom = "20px";
-    $button.style.right = "20px";
-    $button.style.zIndex = "999999";
-    $button.style.height = "2.2em";
-    $button.style.backgroundColor = "rgba(139, 90, 43, 0.9)"; // 棕色，适配小说阅读
-    $button.style.color = "white";
-    $button.style.outline = "none";
-    $button.style.border = "none";
-    $button.style.cursor = "pointer";
-    $button.style.borderRadius = "1em";
-    $button.style.fontSize = "1em";
-    $button.style.padding = ".4em 1em";
-    $button.style.boxShadow = "0 2px 6px rgba(0,0,0,0.3)";
-    $button.setAttribute("aria-label", "将当前章节导出为 Markdown");
-
-    if (window.matchMedia && window.matchMedia("(max-width: 768px)").matches) {
-      $button.style.bottom = "60px";
+    function sanitizeFilename(str) {
+        if (!str) return "untitled";
+        return str
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, "_")
+            .replace(/^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)/i, "_$1$2")
+            .trim();
     }
 
-    return $button;
-  }
-
-  /**
-   * 提取章节标题（从页面 title 或 h1）
-   */
-  function getChapterTitle() {
-    const titleEl = document.querySelector("h1");
-    if (titleEl && titleEl.innerText.trim()) {
-      return titleEl.innerText.trim();
-    }
-    // 从 document.title 提取（格式通常是 "章节名 - 书名 - hlib.cc"）
-    const titleParts = document.title.split(" - ");
-    if (titleParts.length >= 2) {
-      return titleParts[0].trim();
-    }
-    return document.title.trim() || "untitled";
-  }
-
-  /**
-   * 提取书名（从页面 title 或 URL）
-   */
-  function getBookTitle() {
-    const titleParts = document.title.split(" - ");
-    if (titleParts.length >= 2) {
-      return titleParts[1].trim();
-    }
-    return "未知书名";
-  }
-
-  /**
-   * 提取 #content 中的正文 HTML
-   */
-  function getContentHTML() {
-    const content = document.querySelector("#content");
-    if (!content) {
-      console.warn(DEBUG_PREFIX, "未找到 #content 容器");
-      return null;
-    }
-    // 深克隆，避免修改原始 DOM
-    return content.cloneNode(true);
-  }
-
-  /**
-   * 清理正文中的无关元素
-   */
-  function cleanContent(node) {
-    if (!node) return null;
-    const clone = node.cloneNode(true);
-
-    // 删除不需要的元素
-    const removeSelectors = [
-      "script", "style", "nav", "header", "footer", "aside",
-      ".ads", ".ad", ".advertisement", ".banner",
-      ".pagination", ".page-nav", ".chapter-nav",
-      ".comments", "#comments", ".comment",
-      ".share", ".share-bar", ".social-share",
-      ".recommend", ".related", ".sidebar",
-      "#" + BUTTON_ID
-    ];
-    removeSelectors.forEach(sel => {
-      clone.querySelectorAll(sel).forEach(el => el.remove());
-    });
-
-    return clone;
-  }
-
-  /**
-   * 检测"下一页"链接
-   */
-  function getNextPageUrl() {
-    // 常见分页选择器
-    const selectors = [
-      "a[rel='next']",
-      "a[aria-label='下一页']",
-      ".pagination a:last-child",
-      ".next a",
-      "a.next",
-      "[class*='next'] a",
-      "a[href*='?page=']"
-    ];
-    for (const sel of selectors) {
-      const el = document.querySelector(sel);
-      if (el && el.href) {
-        // 排除"下一章"链接（通常包含 chapter 或明显不同）
-        const text = (el.innerText || el.textContent || "").trim();
-        if (text.includes("下一章") || text.includes("下一节")) {
-          continue; // 跳过章节跳转，只翻页
-        }
-        return el.href;
-      }
-    }
-    // 兜底：从页面链接中找下一页
-    const allLinks = document.querySelectorAll("a");
-    for (const link of allLinks) {
-      const text = (link.innerText || link.textContent || "").trim();
-      if (/下一页|下页|下一頁/.test(text) && link.href) {
-        return link.href;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * 使用 GM_xmlhttpRequest 获取下一页内容
-   */
-  function fetchPage(url) {
-    return new Promise((resolve, reject) => {
-      if (typeof GM_xmlhttpRequest !== "undefined") {
-        GM_xmlhttpRequest({
-          method: "GET",
-          url: url,
-          onload: function(response) {
-            if (response.status === 200) {
-              resolve(response.responseText);
-            } else {
-              reject(new Error("HTTP " + response.status + " for " + url));
-            }
-          },
-          onerror: function(err) {
-            reject(new Error("Failed to fetch " + url));
-          }
+    function extractTextFromContent(contentEl) {
+        if (!contentEl) return "";
+        const paragraphs = contentEl.querySelectorAll('p');
+        let text = '';
+        paragraphs.forEach(p => {
+            const t = p.textContent.trim();
+            if (t) text += t + '\n\n';
         });
-      } else {
-        fetch(url)
-          .then(r => {
-            if (!r.ok) throw new Error("HTTP " + r.status);
-            return r.text();
-          })
-          .then(resolve)
-          .catch(reject);
-      }
-    });
-  }
+        return text.trim();
+    }
 
-  /**
-   * 从 HTML 字符串中提取 #content 正文
-   */
-  function extractContentFromHTML(html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-    const content = doc.querySelector("#content");
-    if (!content) return null;
-    return cleanContent(content);
-  }
-
-  /**
-   * 从 HTML 字符串中提取下一页链接
-   */
-  function extractNextPageUrl(html) {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
-
-    const selectors = [
-      "a[rel='next']",
-      "a[aria-label='下一页']",
-      ".pagination a:last-child",
-      ".next a",
-      "a.next",
-      "[class*='next'] a"
-    ];
-    for (const sel of selectors) {
-      const el = doc.querySelector(sel);
-      if (el && el.href) {
-        const text = (el.innerText || el.textContent || "").trim();
-        if (/下一章|下一节/.test(text)) continue;
-        try {
-          return new URL(el.href, location.href).href;
-        } catch (e) {
-          return el.href;
+    function getChapterTitle() {
+        const titleEl = document.querySelector('.text-center.m-3, h1');
+        if (titleEl && titleEl.innerText.trim()) {
+            return titleEl.innerText.trim();
         }
-      }
-    }
-    const allLinks = doc.querySelectorAll("a");
-    for (const link of allLinks) {
-      const text = (link.innerText || link.textContent || "").trim();
-      if (/下一页|下页|下一頁/.test(text) && link.href) {
-        try {
-          return new URL(link.href, location.href).href;
-        } catch (e) {
-          return link.href;
-        }
-      }
-    }
-    return null;
-  }
-
-  /**
-   * 将 HTML 转换为适合手机阅读的 Markdown
-   * 处理段落、换行、空行等
-   */
-  function htmlToMarkdown(node) {
-    if (!node) return "";
-
-    let md = "";
-    const children = node.childNodes;
-
-    for (const child of children) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        // 文本节点：保留内容，去除多余空白
-        md += child.textContent;
-      } else if (child.nodeType === Node.ELEMENT_NODE) {
-        const tag = child.tagName.toLowerCase();
-        const text = child.innerText.trim();
-
-        if (!text) continue;
-
-        switch (tag) {
-          case "p":
-            md += "\n\n" + htmlToMarkdown(child).trim() + "\n\n";
-            break;
-          case "br":
-            md += "\n";
-            break;
-          case "h1":
-          case "h2":
-          case "h3":
-          case "h4":
-          case "h5":
-          case "h6": {
-            const level = parseInt(tag[1]);
-            const hashes = "#".repeat(level);
-            md += "\n\n" + hashes + " " + text + "\n\n";
-            break;
-          }
-          case "div":
-            // div 如果包含块级元素，递归处理；否则当作段落
-            if (child.querySelector("p, h1, h2, h3, h4, h5, h6, div")) {
-              md += htmlToMarkdown(child);
-            } else {
-              md += "\n\n" + htmlToMarkdown(child).trim() + "\n\n";
-            }
-            break;
-          case "span":
-          case "strong":
-          case "em":
-          case "b":
-          case "i":
-          case "a":
-          case "small":
-          case "big":
-          case "font":
-          case "center":
-          case "blockquote":
-            // 行内元素和简单块元素，递归处理
-            md += htmlToMarkdown(child);
-            break;
-          case "img":
-            // 小说通常没有图片，如果有则保留链接
-            const src = child.getAttribute("src") || "";
-            if (src) {
-              md += "\n\n![Image](" + src + ")\n\n";
-            }
-            break;
-          case "hr":
-            md += "\n\n---\n\n";
-            break;
-          case "ul":
-          case "ol": {
-            const items = child.querySelectorAll("li");
-            items.forEach((li, idx) => {
-              const prefix = tag === "ol" ? (idx + 1) + ". " : "- ";
-              md += "\n" + prefix + li.innerText.trim();
-            });
-            md += "\n\n";
-            break;
-          }
-          case "table": {
-            // 简单表格处理
-            const rows = child.querySelectorAll("tr");
-            if (rows.length > 0) {
-              rows.forEach((row, ridx) => {
-                const cells = row.querySelectorAll("td, th");
-                const cellTexts = Array.from(cells).map(c => c.innerText.trim().replace(/\|/g, "\\|"));
-                md += "\n| " + cellTexts.join(" | ") + " |";
-                if (ridx === 0) {
-                  md += "\n| " + cellTexts.map(() => "---").join(" | ") + " |";
-                }
-              });
-              md += "\n\n";
-            }
-            break;
-          }
-          default:
-            // 其他元素，递归处理文本
-            md += htmlToMarkdown(child);
-        }
-      }
+        const parts = document.title.split(" - ");
+        if (parts.length >= 2) return parts[0].trim();
+        return document.title.trim() || "untitled";
     }
 
-    return md;
-  }
-
-  /**
-   * 后处理 Markdown：清理多余空行、统一段落格式
-   */
-  function postprocessMarkdown(md) {
-    // 1. 将多个连续换行压缩为最多两个（段落分隔）
-    md = md.replace(/\n{3,}/g, "\n\n");
-    // 2. 去除每行首尾空白
-    md = md.split("\n").map(line => line.trimRight()).join("\n");
-    // 3. 去除开头和结尾的空行
-    md = md.replace(/^\n+/, "").replace(/\n+$/, "");
-    // 4. 段落内部：将多个空格压缩为一个
-    md = md.replace(/([^\n])  +/g, "$1 ");
-    // 5. 处理 HTML 实体
-    md = md.replace(/&nbsp;/g, " ");
-    md = md.replace(/&lt;/g, "<");
-    md = md.replace(/&gt;/g, ">");
-    md = md.replace(/&amp;/g, "&");
-    md = md.replace(/&quot;/g, '"');
-    md = md.replace(/&#39;/g, "'");
-    return md;
-  }
-
-  /**
-   * 生成目录（TOC）
-   */
-  function generateTOC(chapters) {
-    let toc = "## 目录\n\n";
-    chapters.forEach((ch, idx) => {
-      toc += (idx + 1) + ". [" + ch.title + "](#chapter-" + (idx + 1) + ")\n";
-    });
-    toc += "\n---\n\n";
-    return toc;
-  }
-
-  /**
-   * 主下载函数：翻页合并
-   */
-  async function downloadChapter() {
-    const btn = document.getElementById(BUTTON_ID);
-    if (btn && btn.disabled) return;
-
-    if (btn) {
-      btn.disabled = true;
-      btn.innerText = " 正在翻页... ";
-      btn.style.opacity = "0.7";
+    function getBookTitle() {
+        const parts = document.title.split(" - ");
+        if (parts.length >= 2) return parts[1].trim();
+        return "未知书名";
     }
 
-    try {
-      const chapters = []; // 存储所有页的内容
-      let currentUrl = location.href;
-      let pageCount = 0;
+    // ========== 侧边栏 UI ==========
 
-      console.log(DEBUG_PREFIX, "开始下载章节:", getChapterTitle());
+    const menuBar = document.createElement('div');
+    menuBar.style.position = 'fixed';
+    menuBar.style.top = '0';
+    menuBar.style.left = '0';
+    menuBar.style.height = '100%';
+    menuBar.style.width = '120px';
+    menuBar.style.backgroundColor = '#333';
+    menuBar.style.color = '#fff';
+    menuBar.style.padding = '10px 0';
+    menuBar.style.display = 'flex';
+    menuBar.style.flexDirection = 'column';
+    menuBar.style.alignItems = 'center';
+    menuBar.style.zIndex = '9999';
+    menuBar.style.boxShadow = '2px 0 4px rgba(0, 0, 0, 0.2)';
+    menuBar.style.transition = 'transform 0.3s ease';
+    menuBar.style.overflowY = 'auto';
 
-      // 翻页循环
-      while (currentUrl && pageCount < MAX_PAGES) {
-        pageCount++;
-        console.log(DEBUG_PREFIX, `正在获取第 ${pageCount} 页:`, currentUrl);
-
-        let contentHTML;
-        let nextUrl;
-
-        if (pageCount === 1) {
-          // 第一页：直接从当前 DOM 获取
-          contentHTML = getContentHTML();
-          nextUrl = getNextPageUrl();
+    const toggleBtn = document.createElement('button');
+    toggleBtn.textContent = '≡';
+    toggleBtn.style.position = 'fixed';
+    toggleBtn.style.top = '10px';
+    toggleBtn.style.left = '120px';
+    toggleBtn.style.backgroundColor = '#333';
+    toggleBtn.style.color = '#fff';
+    toggleBtn.style.border = 'none';
+    toggleBtn.style.padding = '10px';
+    toggleBtn.style.cursor = 'pointer';
+    toggleBtn.style.zIndex = '10000';
+    toggleBtn.style.fontSize = '18px';
+    toggleBtn.addEventListener('click', () => {
+        if (menuBar.style.transform === 'translateX(-100%)') {
+            menuBar.style.transform = 'translateX(0)';
+            toggleBtn.style.left = '120px';
         } else {
-          // 后续页：通过 fetch 获取
-          try {
-            const html = await fetchPage(currentUrl);
-            contentHTML = extractContentFromHTML(html);
-            nextUrl = extractNextPageUrl(html);
-          } catch (err) {
-            console.error(DEBUG_PREFIX, "获取页面失败:", currentUrl, err.message);
-            break;
-          }
+            menuBar.style.transform = 'translateX(-100%)';
+            toggleBtn.style.left = '0';
+        }
+    });
+
+    function createButton(text, backgroundColor, title, onClick) {
+        const button = document.createElement('button');
+        button.textContent = text;
+        button.title = title || text;
+        button.style.marginBottom = '8px';
+        button.style.padding = '8px 4px';
+        button.style.border = 'none';
+        button.style.backgroundColor = backgroundColor;
+        button.style.color = '#fff';
+        button.style.cursor = 'pointer';
+        button.style.width = '90%';
+        button.style.textAlign = 'center';
+        button.style.fontSize = '12px';
+        button.style.borderRadius = '4px';
+        button.addEventListener('click', onClick);
+        return button;
+    }
+
+    // ========== ① 自动翻页合并（主要功能）==========
+
+    async function autoMergeDownload() {
+        const btn = document.getElementById('auto-merge-btn');
+        if (btn) {
+            btn.textContent = '合并中...';
+            btn.disabled = true;
         }
 
-        if (!contentHTML) {
-          console.warn(DEBUG_PREFIX, "第", pageCount, "页无内容");
-          break;
+        const pages = [];
+        let currentUrl = location.href;
+        let pageCount = 0;
+
+        console.log(DEBUG_PREFIX, "开始自动翻页合并...");
+
+        while (currentUrl && pageCount < MAX_PAGES) {
+            pageCount++;
+            console.log(DEBUG_PREFIX, `获取第 ${pageCount} 页: ${currentUrl}`);
+
+            let html, contentEl, nextUrl;
+
+            if (pageCount === 1) {
+                contentEl = document.querySelector('#content');
+                nextUrl = findNextPageUrl(document);
+            } else {
+                try {
+                    html = await fetchPage(currentUrl);
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    contentEl = doc.querySelector('#content');
+                    nextUrl = findNextPageUrl(doc);
+                } catch (err) {
+                    console.error(DEBUG_PREFIX, "获取失败:", err.message);
+                    break;
+                }
+            }
+
+            if (!contentEl) {
+                console.warn(DEBUG_PREFIX, "第", pageCount, "页无内容");
+                break;
+            }
+
+            const text = extractTextFromContent(contentEl);
+            pages.push({ text, url: currentUrl });
+            console.log(DEBUG_PREFIX, `第 ${pageCount} 页获取完成，字数: ${text.length}`);
+
+            if (!nextUrl || nextUrl === currentUrl) {
+                console.log(DEBUG_PREFIX, "没有更多页面");
+                break;
+            }
+
+            currentUrl = nextUrl;
+            await new Promise(r => setTimeout(r, 300));
         }
 
-        // 转换为 Markdown
-        let md = htmlToMarkdown(contentHTML);
-        md = postprocessMarkdown(md);
+        // 组装 Markdown
+        const chapterTitle = getChapterTitle();
+        const bookTitle = getBookTitle();
+        const dateStr = new Date().toISOString().slice(0, 10);
 
-        chapters.push({
-          title: pageCount === 1 ? getChapterTitle() : `第 ${pageCount} 页`,
-          content: md,
-          url: currentUrl
+        let md = `# ${chapterTitle}\n\n`;
+        md += `**书名：** ${bookTitle}  \n`;
+        md += `**来源：** ${location.href}  \n`;
+        md += `**下载时间：** ${dateStr}  \n`;
+        md += `**共 ${pages.length} 页**\n\n`;
+        md += `---\n\n`;
+
+        if (pages.length > 1) {
+            md += `## 目录\n\n`;
+            pages.forEach((p, i) => {
+                md += `${i + 1}. [第 ${i + 1} 页](#page-${i + 1})\n`;
+            });
+            md += `\n---\n\n`;
+        }
+
+        pages.forEach((p, i) => {
+            if (pages.length > 1) {
+                md += `<a id="page-${i + 1}"></a>\n\n`;
+                md += `## 第 ${i + 1} 页\n\n`;
+            }
+            md += p.text + '\n\n';
+            if (i < pages.length - 1) md += `---\n\n`;
         });
 
-        console.log(DEBUG_PREFIX, `第 ${pageCount} 页获取完成，字数:`, md.length);
+        // 下载
+        const filename = sanitizeFilename(`${bookTitle} - ${chapterTitle}`).slice(0, 120) + ".md";
+        const blob = new Blob(["\uFEFF" + md], { type: "text/markdown;charset=utf-8" });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
 
-        // 检测是否还有下一页
-        if (!nextUrl || nextUrl === currentUrl) {
-          console.log(DEBUG_PREFIX, "没有更多页面");
-          break;
+        console.log(DEBUG_PREFIX, "下载完成:", filename, "页数:", pages.length);
+        alert(`下载完成！\n文件名：${filename}\n共 ${pages.length} 页，${pages.reduce((s, p) => s + p.text.length, 0)} 字`);
+
+        if (btn) {
+            btn.textContent = '自动翻页合并';
+            btn.disabled = false;
         }
+    }
 
-        currentUrl = nextUrl;
+    function fetchPage(url) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest !== "undefined") {
+                GM_xmlhttpRequest({
+                    method: "GET", url: url,
+                    onload: r => r.status === 200 ? resolve(r.responseText) : reject(new Error("HTTP " + r.status)),
+                    onerror: () => reject(new Error("Failed"))
+                });
+            } else {
+                fetch(url).then(r => r.ok ? r.text() : Promise.reject(new Error("HTTP " + r.status)))
+                    .then(resolve).catch(reject);
+            }
+        });
+    }
 
-        // 小延迟，避免请求过快
-        if (pageCount < MAX_PAGES) {
-          await new Promise(r => setTimeout(r, 500));
+    function findNextPageUrl(doc) {
+        const selectors = [
+            "a[rel='next']", "a[aria-label='下一页']",
+            ".pagination a:last-child", ".next a", "a.next"
+        ];
+        for (const sel of selectors) {
+            const el = doc.querySelector(sel);
+            if (el && el.href) {
+                const text = (el.innerText || "").trim();
+                if (/下一章/.test(text)) continue;
+                return new URL(el.href, location.href).href;
+            }
         }
-      }
-
-      if (chapters.length === 0) {
-        alert("下载器：未获取到任何内容。");
-        return;
-      }
-
-      console.log(DEBUG_PREFIX, "共获取", chapters.length, "页");
-
-      // 组装最终 Markdown
-      const bookTitle = getBookTitle();
-      const chapterTitle = getChapterTitle();
-      const dateStr = new Date().toISOString().slice(0, 10);
-
-      let finalMarkdown = `# ${chapterTitle}\n\n`;
-      finalMarkdown += `**书名：** ${bookTitle}  \n`;
-      finalMarkdown += `**来源：** ${location.href}  \n`;
-      finalMarkdown += `**下载时间：** ${dateStr}  \n`;
-      finalMarkdown += `**共 ${chapters.length} 页**\n\n`;
-      finalMarkdown += `---\n\n`;
-
-      // 生成目录
-      if (chapters.length > 1) {
-        finalMarkdown += generateTOC(chapters);
-      }
-
-      // 合并内容
-      chapters.forEach((ch, idx) => {
-        if (chapters.length > 1) {
-          finalMarkdown += `<a id="chapter-${idx + 1}"></a>\n\n`;
-          finalMarkdown += `## ${ch.title}\n\n`;
+        for (const link of doc.querySelectorAll("a")) {
+            if (/下一页/.test(link.innerText || "") && link.href) {
+                return new URL(link.href, location.href).href;
+            }
         }
-        finalMarkdown += ch.content + "\n\n";
-        if (idx < chapters.length - 1) {
-          finalMarkdown += `---\n\n`;
+        return null;
+    }
+
+    // ========== ② 手动保存（保留原功能）==========
+
+    function saveCurrentPage() {
+        let content = '';
+        if (checkBox.checked) {
+            const titleEl = document.querySelector('.text-center.m-3, h1');
+            if (titleEl) content += `# ${titleEl.textContent.trim()}\n\n`;
         }
-      });
-
-      // 下载文件
-      const filename = sanitizeFilename(`${bookTitle} - ${chapterTitle}`).slice(0, 120) + ".md";
-      const blob = new Blob(["\uFEFF" + finalMarkdown], { type: "text/markdown;charset=utf-8" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = filename;
-      link.rel = "noopener";
-      document.body.appendChild(link);
-      link.click();
-
-      setTimeout(() => {
-        URL.revokeObjectURL(link.href);
-        if (link.parentNode) link.remove();
-      }, 5000);
-
-      console.log(DEBUG_PREFIX, "下载完成:", filename, "页数:", chapters.length, "总字数:", finalMarkdown.length);
-      alert(`下载完成！\n\n文件名：${filename}\n页数：${chapters.length}\n总字数：${finalMarkdown.length}`);
-
-    } catch (err) {
-      console.error(DEBUG_PREFIX, "导出失败:", err);
-      alert("下载器：导出失败，错误信息：" + err.message);
-    } finally {
-      if (btn) {
-        btn.disabled = false;
-        btn.innerText = " 下载章节 ";
-        btn.style.opacity = "1";
-      }
+        const contentEl = document.getElementById('content');
+        if (contentEl) {
+            const paragraphs = contentEl.querySelectorAll('p');
+            paragraphs.forEach(p => {
+                const t = p.textContent.trim();
+                if (t) content += t + '\n\n';
+            });
+        }
+        let saved = localStorage.getItem('savedContent') || '';
+        localStorage.setItem('savedContent', saved + '\n\n' + content);
+        sessionStorage.setItem('recentContent', content);
+        console.log(DEBUG_PREFIX, '已手动保存当前页');
+        printSavedStatus();
     }
-  }
 
-  /**
-   * 挂载或移除按钮
-   */
-  function ensureButton() {
-    const existing = document.getElementById(BUTTON_ID);
-    const isNovelPage = location.hostname === "hlib.cc" && /^\/n\//.test(location.pathname);
-
-    if (isNovelPage) {
-      if (!existing) {
-        const button = makeButton(" 下载章节 ");
-        button.addEventListener("click", downloadChapter);
-        document.body.appendChild(button);
-        console.log(DEBUG_PREFIX, "检测到 hlib.cc 小说页，按钮已挂载:", location.href);
-      }
-    } else {
-      if (existing) {
-        existing.remove();
-        console.log(DEBUG_PREFIX, "离开 hlib.cc 小说页，按钮已移除");
-      }
+    function clearAllSaved() {
+        localStorage.removeItem('savedContent');
+        console.log(DEBUG_PREFIX, '已清除所有保存内容');
+        printSavedStatus();
     }
-  }
 
-  // 拦截路由变化
-  (function() {
-    const origPush = history.pushState;
-    const origReplace = history.replaceState;
-    function wrap(fn) {
-      return function() {
-        const result = fn.apply(this, arguments);
-        ensureButton();
-        return result;
-      };
+    function clearRecentSaved() {
+        let saved = localStorage.getItem('savedContent') || '';
+        const recent = sessionStorage.getItem('recentContent') || '';
+        if (recent && saved.includes(recent)) {
+            saved = saved.replace(recent, '');
+            localStorage.setItem('savedContent', saved);
+            console.log(DEBUG_PREFIX, '已清除最近保存');
+        }
+        sessionStorage.removeItem('recentContent');
+        printSavedStatus();
     }
-    history.pushState = wrap(origPush);
-    history.replaceState = wrap(origReplace);
-  })();
 
-  // MutationObserver 监听
-  let lastUrl = location.href;
-  function maybeEnsureButton() {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      ensureButton();
+    function downloadManualSaved() {
+        const content = localStorage.getItem('savedContent');
+        if (!content) {
+            alert('没有保存的内容，请先逐页点击【保存当前页】');
+            return;
+        }
+        const filename = prompt('输入文件名:', document.title) || 'download.txt';
+        const blob = new Blob([content], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+        localStorage.removeItem('savedContent');
+        console.log(DEBUG_PREFIX, '已下载手动保存内容');
+        printSavedStatus();
     }
-  }
 
-  const observer = new MutationObserver(maybeEnsureButton);
-  observer.observe(document.body, { childList: true, subtree: true });
-  const titleEl = document.querySelector("title");
-  if (titleEl) {
-    const titleObserver = new MutationObserver(maybeEnsureButton);
-    titleObserver.observe(titleEl, { childList: true });
-  }
+    function printSavedStatus() {
+        const saved = localStorage.getItem('savedContent') || '';
+        const lines = saved.split('\n').filter(l => l.trim()).length;
+        console.log(DEBUG_PREFIX, '手动保存内容行数:', lines);
+    }
 
-  window.addEventListener("popstate", ensureButton);
-  window.addEventListener("hashchange", ensureButton);
+    // ========== ③ 按钮创建 ==========
 
-  // 初始化
-  console.log(DEBUG_PREFIX, "hlib.cc 小说下载器已加载（v1.0.0）");
-  ensureButton();
+    const autoMergeBtn = createButton('自动翻页合并', '#2196F3', '一键自动翻页，合并所有分页为 Markdown', autoMergeDownload);
+    autoMergeBtn.id = 'auto-merge-btn';
+    autoMergeBtn.style.fontSize = '13px';
+    autoMergeBtn.style.fontWeight = 'bold';
+
+    const saveBtn = createButton('保存当前页', '#4CAF50', '将当前页内容保存到 localStorage（手动模式）', saveCurrentPage);
+    const clearAllBtn = createButton('清除全部', '#f44336', '清除所有手动保存的内容', clearAllSaved);
+    const clearRecentBtn = createButton('清除最近', '#f44336', '清除最近一次手动保存的内容', clearRecentSaved);
+
+    const checkBoxLabel = document.createElement('label');
+    checkBoxLabel.innerHTML = '<input type="checkbox" style="margin-right:5px">添加章节标题';
+    checkBoxLabel.style.marginBottom = '8px';
+    checkBoxLabel.style.fontSize = '12px';
+    checkBoxLabel.style.color = '#fff';
+    const checkBox = checkBoxLabel.querySelector('input');
+
+    const downloadBtn = createButton('下载手动保存', '#FF9800', '下载所有手动保存的内容（需先逐页保存）', downloadManualSaved);
+
+    // 下一页/下一章（辅助导航）
+    let nextPageBtn = null;
+    document.querySelectorAll('.btn.btn-primary.py-2, .btn.btn-light.py-2.me-3').forEach(button => {
+        if (button.onclick && !nextPageBtn) {
+            nextPageBtn = createButton('下一页', '#607D8B', '跳转到下一页', button.onclick);
+        }
+    });
+
+    let nextChapterBtn = null;
+    const pagination = document.querySelector('.row.pagination.mb-3');
+    if (pagination) {
+        const items = pagination.querySelectorAll('li');
+        if (items.length > 0) {
+            const nextUrl = items.length === 1
+                ? items[0].querySelector('a').href
+                : items[1].querySelector('a').href;
+            nextChapterBtn = createButton('下一章', '#8E44AD', '跳转到下一章', () => {
+                window.location.href = nextUrl;
+            });
+        }
+    }
+
+    // 分隔线
+    const separator = document.createElement('div');
+    separator.style.width = '80%';
+    separator.style.height = '1px';
+    separator.style.backgroundColor = '#555';
+    separator.style.margin = '8px 0';
+
+    const separator2 = separator.cloneNode();
+
+    // 组装菜单
+    menuBar.appendChild(autoMergeBtn);
+    menuBar.appendChild(separator);
+    menuBar.appendChild(saveBtn);
+    menuBar.appendChild(clearAllBtn);
+    menuBar.appendChild(clearRecentBtn);
+    menuBar.appendChild(checkBoxLabel);
+    menuBar.appendChild(downloadBtn);
+    menuBar.appendChild(separator2);
+    if (nextPageBtn) menuBar.appendChild(nextPageBtn);
+    if (nextChapterBtn) menuBar.appendChild(nextChapterBtn);
+
+    document.body.appendChild(menuBar);
+    document.body.appendChild(toggleBtn);
+
+    // 快捷键
+    document.addEventListener('keydown', (e) => {
+        if (!e.shiftKey) return;
+        switch (e.key) {
+            case 'A': autoMergeDownload(); break;
+            case 'S': saveCurrentPage(); break;
+            case 'Backspace': clearAllSaved(); break;
+            case 'T': checkBox.checked = !checkBox.checked; break;
+            case 'N': if (nextPageBtn) nextPageBtn.click(); break;
+            case 'M': if (nextChapterBtn) nextChapterBtn.click(); break;
+        }
+    });
+
+    console.log(DEBUG_PREFIX, '已加载 v2.0.0，快捷键：Shift+A 自动合并，Shift+S 手动保存');
+    printSavedStatus();
 })();
