@@ -12,7 +12,7 @@
 | **Discourse 论坛** | `adapters/discourse-downloader.js` | ✅ 稳定 | 支持帖子正文+回复、表格、代码块、折叠详情、引用块 |
 | **少数派** | `adapters/sspai-downloader.js` | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
 | **LifeUp Wiki** | `adapters/lifeup-wiki-downloader.js` | 🧪 测试 | 支持文档页当前页导出（hash 路由，含图片、表格、代码块） |
-| 知乎 | 待开发 | 🚧 计划 | — |
+| **知乎** | `adapters/zhihu-downloader.js` | 🧪 测试 | 支持问题页（含 /answer/ 直达页）：问题描述 + 已加载回答 |
 | CSDN | 待开发 | 🚧 计划 | — |
 | 稀土掘金 | 待开发 | 🚧 计划 | — |
 
@@ -36,6 +36,7 @@
 - [安装 Discourse 论坛下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/discourse-downloader.js)
 - [安装 少数派下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/sspai-downloader.js) 🧪 测试版
 - [安装 LifeUp Wiki 下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/lifeup-wiki-downloader.js) 🧪 测试版
+- [安装 知乎下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/zhihu-downloader.js) 🧪 测试版
 
 **方式二：手动复制**
 
@@ -58,7 +59,7 @@
 
 ## 开发计划
 
-- [ ] 知乎专栏适配
+- [x] 知乎问题页适配（专栏待开发）
 - [ ] CSDN 博客适配
 - [ ] 稀土掘金适配
 - [ ] 通用适配器模板（降低新网站接入门槛）
@@ -78,7 +79,7 @@ web2md/
 ├── adapters/                          # 各网站适配器（用户脚本）
 │   ├── x-article-downloader.js          # X / Twitter 文章下载器
 │   ├── discourse-downloader.js          # Discourse 论坛下载器
-│   ├── zhihu-downloader.js            # 知乎（预留）
+│   ├── zhihu-downloader.js            # 知乎问题页下载器
 │   ├── csdn-downloader.js             # CSDN（预留）
 │   └── juejin-downloader.js           # 稀土掘金（预留）
 ├── docs/                              # 文档
