@@ -2,7 +2,7 @@
 // @name         Discourse 论坛下载器（通用版）
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      2.8.2
+// @version      2.9.0
 // @description  适用于任意 Discourse 论坛帖子页：一键将帖子正文+回复备份为 Markdown，含表格转换，自动检测页面/支持站内SPA路由切换
 // @author       ghoustghoust
 // @match        *://*/*
@@ -14,9 +14,14 @@
 // @supportURL   https://github.com/ghoustghoust/web2md/issues
 // @connect      unpkg.com
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
+// @require      https://raw.githubusercontent.com/ghoustghoust/web2md/main/lib/turndown-rich-rules.js
 // ==/UserScript==
 
 /** 更新日志
+ * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
+ *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
+ *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
+ *    - 表格 rowspan/colspan 自动展平防错位
  * 1: 脚本开写（仅适配 linux.do）
  * 2-6: 修复按钮挂载、虚拟列表丢失楼主正文、表格转换等问题（详见历史版本）
  * 7 (2.0.0): 通用化重构
@@ -349,6 +354,9 @@
   function createTurndownService() {
     const turndownService = new TurndownService();
 
+    // 共享富语法规则（公式/任务列表/注脚/代码块等），站点规则后加可覆盖
+    if (window.Web2mdRichRules) window.Web2mdRichRules.apply(turndownService);
+
     // 我们自定义表格转换规则，不依赖外部插件
     turndownService.addRule("tableToMarkdown", {
       filter: "table",
@@ -574,6 +582,8 @@
 
       function cleanCooked(cookedEl) {
         const cookedClone = cookedEl.cloneNode(true);
+        // 展平表格合并单元格，防止 Markdown 表格列错位
+        if (window.Web2mdRichRules) window.Web2mdRichRules.flattenTables(cookedClone);
         cookedClone
           .querySelectorAll(
             ".post-menu-area, .topic-map, #" +

@@ -2,7 +2,7 @@
 // @name         知乎回答下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.0.0
+// @version      1.1.0
 // @description  适用于知乎问题页（含 /answer/ 直达页）：一键将问题与已加载的回答导出为 Markdown，含问题描述、回答作者、正文（图片、表格、代码块）。
 // @author       ghoustghoust
 // @match        https://www.zhihu.com/question/*
@@ -13,9 +13,14 @@
 // @homepageURL  https://github.com/ghoustghoust/web2md
 // @supportURL   https://github.com/ghoustghoust/web2md/issues
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
+// @require      https://raw.githubusercontent.com/ghoustghoust/web2md/main/lib/turndown-rich-rules.js
 // ==/UserScript==
 
 /** 更新日志
+ * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
+ *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
+ *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
+ *    - 表格 rowspan/colspan 自动展平防错位
  * 1.0.0: 初始版本
  *    - 支持知乎问题页当前页导出（问题标题、问题描述、已加载的所有回答）
  *    - 支持 /question/xxx/answer/yyy 直达回答页
@@ -86,6 +91,9 @@
       codeBlockStyle: "fenced",
       emDelimiter: "*"
     });
+
+    // 共享富语法规则（公式/任务列表/注脚/表格等），站点规则后加可覆盖
+    if (window.Web2mdRichRules) window.Web2mdRichRules.apply(td);
 
     // 知乎图片懒加载：真实地址在 data-original / data-actualsrc，src 常是占位图
     td.addRule("zhihuImage", {

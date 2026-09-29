@@ -2,7 +2,7 @@
 // @name         LifeUp Wiki 页面下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.0.0
+// @version      1.1.0
 // @description  适用于 LifeUp（人升）Wiki（wiki.lifeupapp.fun）：一键将当前文档页导出为 Markdown，含标题、正文、图片、表格、代码块。支持 hash 路由切换页面。
 // @author       ghoustghoust
 // @match        https://wiki.lifeupapp.fun/*
@@ -13,9 +13,14 @@
 // @homepageURL  https://github.com/ghoustghoust/web2md
 // @supportURL   https://github.com/ghoustghoust/web2md/issues
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
+// @require      https://raw.githubusercontent.com/ghoustghoust/web2md/main/lib/turndown-rich-rules.js
 // ==/UserScript==
 
 /** 更新日志
+ * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
+ *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
+ *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
+ *    - 表格 rowspan/colspan 自动展平防错位
  * 1.0.0: 初始版本
  *    - 支持 wiki.lifeupapp.fun 文档页当前页导出
  *    - 多选择器自动定位正文容器（docsify / vuepress 等主题兼容）
@@ -178,6 +183,8 @@
       }
 
       const clone = cleanContent(contentEl.cloneNode(true));
+      // 展平表格合并单元格，防止 Markdown 表格列错位
+      if (window.Web2mdRichRules) window.Web2mdRichRules.flattenTables(clone);
       const pageTitle = getPageTitle(contentEl);
       const dateStr = new Date().toISOString().slice(0, 10);
 
@@ -187,6 +194,9 @@
         codeBlockStyle: "fenced",
         emDelimiter: "*"
       });
+
+      // 共享富语法规则（公式/任务列表/注脚/表格等），站点规则后加可覆盖
+      if (window.Web2mdRichRules) window.Web2mdRichRules.apply(td);
 
       // 图片：保留浏览器已解析的绝对地址
       td.addRule("absoluteImage", {

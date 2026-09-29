@@ -2,7 +2,7 @@
 // @name         X 文章下崽器（Article 通用版）
 // @namespace    http://x.com/
 // @source       https://github.com/
-// @version      2.0.15
+// @version      2.1.0
 // @description  适用于 X（Twitter）Articles 详情页：一键将文章正文全格式导出为 Markdown，支持图片、标题、双语段落
 // @author       xdd (modified)
 // @match        *://x.com/*
@@ -15,9 +15,14 @@
 // @supportURL   https://x.com/
 // @connect      unpkg.com
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
+// @require      https://raw.githubusercontent.com/ghoustghoust/web2md/main/lib/turndown-rich-rules.js
 // ==/UserScript==
 
 /** 更新日志
+ * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
+ *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
+ *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
+ *    - 表格 rowspan/colspan 自动展平防错位
  * 2.0.15: 修复链接被错误分段 + 图片 404 + 边界优化
  *    ① fixImageUrl: 已有扩展名的图片 URL 去掉所有参数（避免 name=orig 导致 404）。
  *      无扩展名的 URL 使用 format=jpg&name=large。
@@ -480,6 +485,9 @@
   function createTurndown() {
     const td = new TurndownService({ headingStyle: "atx", bulletListMarker: "-" });
 
+    // 共享富语法规则（公式/任务列表/注脚/表格/对齐等），站点规则后加可覆盖
+    if (window.Web2mdRichRules) window.Web2mdRichRules.apply(td);
+
     // 标题规则：data-x-heading → ##
     td.addRule("xHeading", {
       filter: function(node) {
@@ -732,6 +740,8 @@
 
       const clone = container.cloneNode(true);
       cleanDOM(clone, authorInfo);
+      // 展平表格合并单元格，防止 Markdown 表格列错位
+      if (window.Web2mdRichRules) window.Web2mdRichRules.flattenTables(clone);
 
       Array.from(clone.querySelectorAll('[role="banner"], [role="group"], [role="navigation"], [data-testid="sidebarColumn"], [data-testid="bottomBar"], #' + BUTTON_ID)).forEach(el => el.remove());
 

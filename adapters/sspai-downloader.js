@@ -2,7 +2,7 @@
 // @name         少数派文章下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.1.8
+// @version      1.2.0
 // @description  适用于少数派（sspai.com）文章页：一键将文章导出为 Markdown 并下载图片到本地文件夹，含标题、作者、发布时间、正文、图片等。支持 File System Access API 选择保存文件夹。
 // @author       ghoustghoust
 // @match        https://sspai.com/post/*
@@ -18,9 +18,14 @@
 // @connect      sspai.com
 // @connect      *
 // @require      https://unpkg.com/turndown@7.1.3/dist/turndown.js
+// @require      https://raw.githubusercontent.com/ghoustghoust/web2md/main/lib/turndown-rich-rules.js
 // ==/UserScript==
 
 /** 更新日志
+ * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
+ *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
+ *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
+ *    - 表格 rowspan/colspan 自动展平防错位
  * 1.1.5: 修复图片扩展名和下载完整性
  *    - getExtensionFromUrl: 优先从 Blob MIME type 推断扩展名（更可靠）
  *    - 统一扩展名：jpeg/jpe → jpg
@@ -226,6 +231,8 @@
   function cleanContent(node) {
     if (!node) return null;
     const clone = node.cloneNode(true);
+    // 展平表格合并单元格，防止 Markdown 表格列错位
+    if (window.Web2mdRichRules) window.Web2mdRichRules.flattenTables(clone);
 
     // 删除不需要的元素（作者卡片、关注按钮、分享、评论等）
     const removeSelectors = [
@@ -448,6 +455,9 @@
       emDelimiter: "*",
       strongDelimiter: "**"
     });
+
+    // 共享富语法规则（公式/任务列表/注脚/表格等），站点规则后加可覆盖
+    if (window.Web2mdRichRules) window.Web2mdRichRules.apply(td);
 
     // 图片：保留 alt，转绝对路径，过滤占位符，支持本地路径映射
     td.addRule("sspaiImage", {
