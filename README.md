@@ -1,6 +1,6 @@
 # web2md
 
-一键将任意网站文章导出为 Markdown。支持 X/Twitter、Discourse 论坛等，保留标题、图片、链接、加粗、表格、代码块等完整格式。基于 Tampermonkey 用户脚本，即装即用。
+一键将任意网站文章导出为 Markdown。支持 X/Twitter、Discourse 论坛、少数派、知乎、LifeUp Wiki、hlib.cc 小说等，保留标题、图片、链接、加粗、表格、代码块等完整格式。基于 Tampermonkey 用户脚本，即装即用。
 
 ---
 
@@ -13,6 +13,7 @@
 | **少数派** | `adapters/sspai-downloader.js` | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
 | **LifeUp Wiki** | `adapters/lifeup-wiki-downloader.js` | 🧪 测试 | 支持文档页当前页导出（hash 路由，含图片、表格、代码块） |
 | **知乎** | `adapters/zhihu-downloader.js` | 🧪 测试 | 支持问题页（含 /answer/ 直达页）：问题描述 + 已加载回答 |
+| **hlib.cc 小说** | `adapters/hlib-novel-downloader.js` | 🧪 测试 | 支持自动翻页合并整章、手动单页保存，适合手机阅读 |
 | CSDN | 待开发 | 🚧 计划 | — |
 | 稀土掘金 | 待开发 | 🚧 计划 | — |
 
@@ -37,6 +38,7 @@
 - [安装 少数派下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/sspai-downloader.js) 🧪 测试版
 - [安装 LifeUp Wiki 下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/lifeup-wiki-downloader.js) 🧪 测试版
 - [安装 知乎下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/zhihu-downloader.js) 🧪 测试版
+- [安装 hlib.cc 小说下载器](https://github.com/ghoustghoust/web2md/raw/main/adapters/hlib-novel-downloader.js) 🧪 测试版
 
 **方式二：手动复制**
 
@@ -52,6 +54,10 @@
 - **Discourse 帖子页**：
   - 单击按钮 = 仅下载楼主正文（快速）
   - `Shift + 单击` = 下载全部楼层（含回复）
+- **少数派**：点击按钮 → 导出文章（含本地图片下载）；Matrix 页导出文章列表
+- **知乎问题页**：点击按钮 → 导出问题描述 + 已加载的回答（先滚动加载更多回答再点）
+- **LifeUp Wiki**：点击按钮 → 导出当前文档页
+- **hlib.cc 小说**：`Shift + A` 自动翻页合并整章；`Shift + S` 手动保存当前页；`Shift + N` 下一页；`Shift + M` 下一章
 
 导出文件包含：标题、作者、发布时间、来源链接、正文（含图片、表格、代码块等）。
 
@@ -79,9 +85,10 @@ web2md/
 ├── adapters/                          # 各网站适配器（用户脚本）
 │   ├── x-article-downloader.js          # X / Twitter 文章下载器
 │   ├── discourse-downloader.js          # Discourse 论坛下载器
-│   ├── zhihu-downloader.js            # 知乎问题页下载器
-│   ├── csdn-downloader.js             # CSDN（预留）
-│   └── juejin-downloader.js           # 稀土掘金（预留）
+│   ├── sspai-downloader.js              # 少数派下载器（文章页 + 矩阵页）
+│   ├── zhihu-downloader.js              # 知乎问题页下载器
+│   ├── lifeup-wiki-downloader.js        # LifeUp Wiki 下载器
+│   └── hlib-novel-downloader.js         # hlib.cc 小说下载器（自动翻页合并）
 ├── docs/                              # 文档
 │   ├── CONTRIBUTING.md                # 贡献指南
 │   └── X-DOM-分析.md                  # 各网站 DOM 特性记录
