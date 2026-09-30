@@ -2,7 +2,7 @@
 // @name         通用博客/文档站下载器
 // @namespace    https://github.com/ghoustghoust/web2md
 // @source       https://github.com/ghoustghoust/web2md
-// @version      1.0.0
+// @version      1.0.1
 // @description  通用适配器：自动识别 Hugo / Hexo / VitePress / Astro / WordPress 等静态博客和文档站的文章正文，一键导出 Markdown。已适配专门脚本（少数派/知乎/CSDN/X 等）的网站自动跳过，避免重复按钮。
 // @author       ghoustghoust
 // @match        *://*/*
@@ -25,6 +25,11 @@
 // ==/UserScript==
 
 /** 更新日志
+ * 1.0.1: 修复识别失败问题
+ *    - 修复高优先级候选未通过检测时不降级后续选择器的 bug
+ *    - 新增选择器：.prose（Tailwind）、div[class*='post-content'] 等模糊匹配、#content
+ *    - main 占比阈值放宽到 95%，跳过时降级而不是放弃
+ *    - 增加识别过程调试日志，便于排查
  * 1.0.0: 初始版本
  *    - 多选择器 + 密度评分自动识别文章正文（Hugo/Hexo/VitePress/Astro/WordPress 等）
  *    - 排除已有专门适配器的网站，避免重复按钮
@@ -45,6 +50,10 @@
     "article .markdown", "article .content",
     ".post-content", ".article-content", ".entry-content",
     ".markdown-body", ".md-content", ".theme-default-content",
+    ".prose",                                     // Tailwind Typography（新一代博客常用）
+    "div[class*='post-content']", "div[class*='article-content']",
+    "div[class*='entry-content']", "div[class*='markdown']",
+    ".main-content", "#content", "#main-content",
     "article main", "article",
     "main article", "main .content", "main",
     "[role='main']"
@@ -66,28 +75,32 @@
     return true;
   }
 
-  /** 定位正文容器：取评分最高（文本最长且不过度嵌套）的候选 */
+  /** 定位正文容器：按优先级逐组尝试，返回第一个通过文章检测的候选 */
   function findContentElement() {
-    let best = null, bestLen = 0;
     for (const sel of CONTENT_SELECTORS) {
       const els = document.querySelectorAll(sel);
+      let best = null, bestLen = 0;
       for (const el of els) {
-        // 跳过嵌在另一个候选里的（保留最外层）
         const len = (el.innerText || "").trim().length;
         if (len < 500) continue;
-        if (!best || len > bestLen) {
-          // 防止把整个 body 当正文：限制 main 的文本占比
-          if (sel === "main" && document.body) {
-            const bodyLen = (document.body.innerText || "").trim().length;
-            if (len / bodyLen > 0.9) continue; // main 几乎等于整页，不可靠
-          }
-          best = el;
-          bestLen = len;
+        if (len > bestLen) { best = el; bestLen = len; }
+      }
+      if (!best) continue;
+      // 防止把整个 body 当正文：main 占比过高则降级到后面的选择器
+      if ((sel === "main" || sel === "[role='main']") && document.body) {
+        const bodyLen = (document.body.innerText || "").trim().length || 1;
+        if (bestLen / bodyLen > 0.95) {
+          console.log(DEBUG_PREFIX, sel, "文本占比过高（" + Math.round(bestLen / bodyLen * 100) + "%），降级尝试");
+          continue;
         }
       }
-      if (best) break; // 高优先级选择器命中就停
+      if (isProbableArticle(best)) {
+        console.log(DEBUG_PREFIX, "正文容器命中选择器:", sel, "字数:", bestLen);
+        return best;
+      }
+      console.log(DEBUG_PREFIX, "候选", sel, "（字数 " + bestLen + "）未通过文章检测，继续降级");
     }
-    if (best && isProbableArticle(best)) return best;
+    console.warn(DEBUG_PREFIX, "所有候选选择器均未命中:", location.href);
     return null;
   }
 
