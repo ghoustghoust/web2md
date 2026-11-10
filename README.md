@@ -8,7 +8,7 @@
 
 | 网站 | 脚本文件 | 版本 | 状态 | 说明 |
 |------|---------|------|------|------|
-| **X / Twitter** | `adapters/x-article-downloader.js` | 2.1.0 | ✅ 稳定 | 支持文章页、图片、视频、链接、加粗、标题层级 |
+| **X / Twitter** | `adapters/x-article-downloader.js` | 2.2.0 | ✅ 稳定 | 支持文章页、焦点阅读页（/article/）、图片、视频、链接、加粗、标题层级 |
 | **Discourse 论坛** | `adapters/discourse-downloader.js` | 2.9.0 | ✅ 稳定 | 支持帖子正文+回复、表格、代码块、折叠详情、引用块 |
 | **少数派** | `adapters/sspai-downloader.js` | 1.2.0 | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
 | **LifeUp Wiki** | `adapters/lifeup-wiki-downloader.js` | 1.1.0 | 🧪 测试 | 支持文档页当前页导出（hash 路由，含图片、表格、代码块） |

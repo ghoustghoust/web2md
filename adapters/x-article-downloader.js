@@ -2,8 +2,8 @@
 // @name         X 文章下崽器（Article 通用版）
 // @namespace    http://x.com/
 // @source       https://github.com/
-// @version      2.1.0
-// @description  适用于 X（Twitter）Articles 详情页：一键将文章正文全格式导出为 Markdown，支持图片、标题、双语段落
+// @version      2.2.0
+// @description  适用于 X（Twitter）Articles 详情页与焦点阅读页（/article/）：一键将文章正文全格式导出为 Markdown，支持图片、标题、双语段落
 // @author       xdd (modified)
 // @match        *://x.com/*
 // @match        *://twitter.com/*
@@ -19,6 +19,10 @@
 // ==/UserScript==
 
 /** 更新日志
+ * 2.2.0: 支持 Articles 焦点阅读页（x.com/<user>/article/<id>、x.com/i/article/<id>）
+ *    - isXArticlePage 同时匹配 /status/ 与 /article/（此前焦点页永远不挂载按钮）
+ *    - findArticleContainer 无 primaryColumn 时回退 twitterArticleReadView
+ *    - collectAuthorInfo 回退 itemprop author meta；getTitle 优先 twitter-article-title
  * 富语法升级：接入共享规则库 lib/turndown-rich-rules.js
  *    - 支持 KaTeX 公式（$...$ / $$...$$）、任务列表、注脚
  *    - 支持高亮 ==、上下标、下划线、kbd、Bilibili 视频、文本对齐
@@ -50,7 +54,7 @@
   function isXArticlePage() {
     const host = location.hostname.toLowerCase();
     const path = location.pathname;
-    return /(x\.com|twitter\.com)$/.test(host) && /\/status\//.test(path);
+    return /(x\.com|twitter\.com)$/.test(host) && /\/(status|article)\//.test(path);
   }
 
   function sanitizeFilename(str) {
@@ -74,7 +78,15 @@
   function collectAuthorInfo() {
     const info = { name: "", handle: "" };
     const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
-    if (!primaryColumn) return info;
+    if (!primaryColumn) {
+      // 焦点阅读页无 primaryColumn，作者信息在 schema.org itemprop meta 中
+      const nameMeta = document.querySelector('meta[itemprop="name"]');
+      const handleMeta = document.querySelector('meta[itemprop="additionalName"]');
+      if (nameMeta) info.name = nameMeta.getAttribute("content") || "";
+      const handle = handleMeta ? handleMeta.getAttribute("content") || "" : "";
+      if (handle) info.handle = "@" + handle;
+      return info;
+    }
 
     const articles = primaryColumn.querySelectorAll("article");
     for (const article of articles) {
@@ -468,7 +480,10 @@
   // 找到文章容器
   function findArticleContainer() {
     const primaryColumn = document.querySelector('[data-testid="primaryColumn"]');
-    if (!primaryColumn) return null;
+    if (!primaryColumn) {
+      const readView = document.querySelector('[data-testid="twitterArticleReadView"]');
+      return (readView && getText(readView).length > 50) ? readView : null;
+    }
 
     const articles = primaryColumn.querySelectorAll("article");
     let best = null, bestLen = 0;
@@ -694,6 +709,11 @@
 
   // 获取标题
   function getTitle() {
+    const articleTitle = document.querySelector('[data-testid="twitter-article-title"]');
+    if (articleTitle) {
+      const t = getText(articleTitle);
+      if (t && t.length > 1) return t;
+    }
     const meta = document.querySelector('meta[property="og:title"]');
     if (meta) {
       const c = meta.getAttribute("content");
@@ -827,7 +847,7 @@
 
   window.addEventListener("popstate", () => setTimeout(ensureButton, 1000));
 
-  console.log(DEBUG_PREFIX, "脚本已加载（X Article v2.0.15）");
+  console.log(DEBUG_PREFIX, "脚本已加载（X Article v2.2.0）");
   setTimeout(ensureButton, 2000);
 
   setInterval(() => {
