@@ -1,23 +1,21 @@
 # web2md
 
-一键将任意网站文章导出为 Markdown。支持 X/Twitter、Discourse 论坛、少数派、知乎、LifeUp Wiki、hlib.cc 小说等，保留标题、图片、链接、加粗、表格、代码块等完整格式。基于 Tampermonkey 用户脚本，即装即用。
+一键将任意网站文章导出为 Markdown。支持 X/Twitter、Discourse 论坛、少数派、知乎、CSDN（免登录）、LifeUp Wiki、hlib.cc 小说及通用博客/文档站，保留标题、图片、链接、加粗、表格、代码块、公式等完整格式。基于 Tampermonkey 用户脚本，即装即用。
 
 ---
 
 ## 支持网站
 
-| 网站 | 脚本文件 | 状态 | 说明 |
-|------|---------|------|------|
-| **X / Twitter** | `adapters/x-article-downloader.js` | ✅ 稳定 | 支持文章页、图片、链接、加粗、标题层级 |
-| **Discourse 论坛** | `adapters/discourse-downloader.js` | ✅ 稳定 | 支持帖子正文+回复、表格、代码块、折叠详情、引用块 |
-| **少数派** | `adapters/sspai-downloader.js` | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
-| **LifeUp Wiki** | `adapters/lifeup-wiki-downloader.js` | 🧪 测试 | 支持文档页当前页导出（hash 路由，含图片、表格、代码块） |
-| **知乎** | `adapters/zhihu-downloader.js` | 🧪 测试 | 支持问题页（含 /answer/ 直达页）：问题描述 + 已加载回答 |
-| **hlib.cc 小说** | `adapters/hlib-novel-downloader.js` | 🧪 测试 | 支持自动翻页合并整章、手动单页保存，适合手机阅读 |
-| **CSDN** | `adapters/csdn-downloader.js` | 🧪 测试 | 免登录阅读全文+免登录复制，文章页导出 Markdown |
-| **通用博客/文档站** | `adapters/generic-blog-downloader.js` | 🧪 测试 | 自动识别 Hugo/Hexo/VitePress/Astro/WordPress 等，个人博客和 wiki 通用 |
-| CSDN | 待开发 | 🚧 计划 | — |
-| 稀土掘金 | 待开发 | 🚧 计划 | — |
+| 网站 | 脚本文件 | 版本 | 状态 | 说明 |
+|------|---------|------|------|------|
+| **X / Twitter** | `adapters/x-article-downloader.js` | 2.1.0 | ✅ 稳定 | 支持文章页、图片、视频、链接、加粗、标题层级 |
+| **Discourse 论坛** | `adapters/discourse-downloader.js` | 2.9.0 | ✅ 稳定 | 支持帖子正文+回复、表格、代码块、折叠详情、引用块 |
+| **少数派** | `adapters/sspai-downloader.js` | 1.2.0 | 🧪 测试 | 支持文章页（标题、作者、时间、正文）、矩阵页文章列表 |
+| **LifeUp Wiki** | `adapters/lifeup-wiki-downloader.js` | 1.1.0 | 🧪 测试 | 支持文档页当前页导出（hash 路由，含图片、表格、代码块） |
+| **知乎** | `adapters/zhihu-downloader.js` | 1.1.0 | 🧪 测试 | 支持问题页（含 /answer/ 直达页）：问题描述 + 已加载回答 |
+| **hlib.cc 小说** | `adapters/hlib-novel-downloader.js` | 2.0.0 | 🧪 测试 | 支持自动翻页合并整章、手动单页保存，适合手机阅读 |
+| **CSDN** | `adapters/csdn-downloader.js` | 1.0.0 | 🧪 测试 | 免登录阅读全文+免登录复制，文章页导出 Markdown |
+| **通用博客/文档站** | `adapters/generic-blog-downloader.js` | 1.0.1 | 🧪 测试 | 自动识别 Hugo/Hexo/VitePress/Astro/WordPress 等，个人博客和 wiki 通用 |
 
 ---
 
@@ -87,9 +85,11 @@
 
 - [x] 知乎问题页适配（专栏待开发）
 - [x] CSDN 博客适配（免登录 + 导出）
+- [x] 通用博客/文档站适配器（Hugo/Hexo/VitePress/Astro/WordPress 等自动识别）
+- [x] 共享富语法规则库（全部适配器已接入）
 - [ ] 稀土掘金适配
-- [ ] 通用适配器模板（降低新网站接入门槛）
-- [ ] 共享工具库（DOM 清理、Turndown 配置等）
+- [ ] 知乎专栏适配
+- [ ] 适配器开发模板与贡献指南（降低新网站接入门槛）
 
 欢迎提交 Issue 或 PR 贡献新网站适配。
 
@@ -108,16 +108,11 @@ web2md/
 │   ├── sspai-downloader.js              # 少数派下载器（文章页 + 矩阵页）
 │   ├── zhihu-downloader.js              # 知乎问题页下载器
 │   ├── lifeup-wiki-downloader.js        # LifeUp Wiki 下载器
-│   └── hlib-novel-downloader.js         # hlib.cc 小说下载器（自动翻页合并）
-│   └── csdn-downloader.js               # CSDN 下载器（免登录+导出）
+│   ├── hlib-novel-downloader.js         # hlib.cc 小说下载器（自动翻页合并）
+│   ├── csdn-downloader.js               # CSDN 下载器（免登录+导出）
 │   └── generic-blog-downloader.js       # 通用博客/文档站下载器（Hugo/Hexo/VitePress 等）
-├── docs/                              # 文档
-│   ├── CONTRIBUTING.md                # 贡献指南
-│   └── X-DOM-分析.md                  # 各网站 DOM 特性记录
-├── lib/                               # 共享工具库
-│   └── turndown-rich-rules.js         # 富语法 Turndown 规则（公式/任务列表/注脚/表格展平等）
-└── templates/                         # 新适配器模板
-    └── adapter-template.js            # 开发脚手架
+└── lib/                               # 共享工具库
+    └── turndown-rich-rules.js           # 富语法 Turndown 规则（公式/任务列表/注脚/表格展平等）
 ```
 
 ---
@@ -142,8 +137,8 @@ web2md/
 - 强制刷新：Tampermonkey 面板 → 脚本「设置」标签 → 外部资源下找到 turndown-rich-rules.js → 点删除缓存
 
 **Q：如何适配新网站？**
-- 查看 `docs/CONTRIBUTING.md` 了解开发规范
-- 复制 `templates/adapter-template.js` 作为起点
+- 先试通用博客下载器：多数静态博客/文档站无需开发即可直接导出
+- 需要专门适配时，参考 `adapters/` 下现有脚本（建议从 `generic-blog-downloader.js` 入手），欢迎提交 Issue 或 PR
 
 ---
 
